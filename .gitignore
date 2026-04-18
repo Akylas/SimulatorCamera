@@ -1,0 +1,34 @@
+# macOS
+.DS_Store
+*.swp
+
+# Xcode
+build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcuserstate
+*.xcuserdatad/
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# Dependencies
+Pods/
+Carthage/Build/
+
+# IDE
+.idea/
+.vscode/
+
+# Release artifacts
+*.dmg
+*.zip
+*.ipa
+release/
+dist/
