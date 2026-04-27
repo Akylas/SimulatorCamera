@@ -7,7 +7,7 @@ import PackageDescription
 let package = Package(
     name: "SimulatorCamera",
     platforms: [
-        .iOS(.v13),
+        .iOS(.v12),
         .macOS(.v13)
     ],
     products: [

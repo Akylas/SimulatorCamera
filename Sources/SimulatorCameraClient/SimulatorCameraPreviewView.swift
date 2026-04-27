@@ -54,6 +54,7 @@ private final class _LayerHolder: @unchecked Sendable {
 
 // MARK: - Model
 
+@available(iOS 13.0, *)
 @MainActor
 public final class SimulatorCameraPreviewModel: ObservableObject, FrameSourceDelegate {
     @Published public private(set) var fps: Double = 0
@@ -177,6 +178,7 @@ public final class SimulatorCameraDisplayView: UIView {
 /// Use this when you want to compose the preview yourself (add your own overlays,
 /// etc.). For a batteries-included view with connection-state and FPS badges, use
 /// `SimulatorCameraPreviewView` instead.
+@available(iOS 13.0, *)
 public struct SimulatorCameraLayerView: UIViewRepresentable {
     public let model: SimulatorCameraPreviewModel
     public var videoGravity: AVLayerVideoGravity
