@@ -1,16 +1,36 @@
 // SampleAppMain.swift
-// Demo iOS app that consumes SimulatorCameraClient and runs Vision
-// rectangle detection on incoming frames.
+// Demo iOS app: classic Vision rectangle detection driven by AVFoundation.
 //
-// In the iOS Simulator, frames come from the macOS companion app.
-// On a real device, frames come from the real camera via AVCaptureSession.
-// The same recognition pipeline runs in both cases.
+// In the iOS Simulator, frames are supplied by SimulatorCameraOutput (which
+// receives JPEG frames from the macOS companion app and calls the standard
+// AVCaptureVideoDataOutputSampleBufferDelegate — no simulator-specific
+// branching inside the delegate).  On a real device the same delegate
+// receives frames from a real AVCaptureSession + AVCaptureVideoDataOutput.
+//
+// Threading model
+// ---------------
+//   frameQueue  (serial, userInitiated)
+//     • AVCaptureVideoDataOutput / SimulatorCameraOutput delivers here.
+//     • CameraController.captureOutput() runs here.
+//     • frameTimestamps and didReportConnected are exclusively on this queue.
+//
+//   visionQueue (serial, userInitiated)
+//     • VNDetectRectanglesRequest runs here, keeping frameQueue responsive.
+//     • Results are dispatched to the main queue for UI updates.
+//
+//   Main queue / @MainActor
+//     • All @Published mutations, all UIKit/SwiftUI rendering.
+//     • SimulatorCameraPreviewModel.display(pixelBuffer:) is nonisolated
+//       and internally dispatches to MainActor — safe to call from frameQueue.
 
+import AVFoundation
+import CoreMedia
+import CoreVideo
+import SimulatorCameraClient
 import SwiftUI
 import Vision
-import CoreVideo
-import CoreMedia
-import SimulatorCameraClient
+
+// MARK: - App entry point
 
 @main
 struct SampleApp: App {
@@ -21,7 +41,7 @@ struct SampleApp: App {
     }
 }
 
-// MARK: - Demo view
+// MARK: - Root view
 
 struct CameraDemoView: View {
     @StateObject private var viewModel = CameraDemoViewModel()
@@ -30,17 +50,18 @@ struct CameraDemoView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            PreviewViewRepresentable(viewModel: viewModel)
+            // Camera preview — renders frames fed via CameraController.
+            CameraPreviewView(model: viewModel.previewModel)
                 .ignoresSafeArea()
 
-            // Rectangle overlay
+            // Vision rectangle overlay
             GeometryReader { proxy in
                 ForEach(viewModel.detectedRectangles, id: \.uuid) { rect in
                     RectangleOverlay(observation: rect, size: proxy.size)
                 }
             }
 
-            // Status overlay
+            // Status + FPS badges
             VStack {
                 HStack {
                     statusBadge
@@ -60,14 +81,14 @@ struct CameraDemoView: View {
             }
             .foregroundStyle(.white)
         }
-        .onAppear { viewModel.start() }
+        .onAppear  { viewModel.start() }
         .onDisappear { viewModel.stop() }
     }
 
     private var statusBadge: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(viewModel.isConnected ? .green : .orange)
+                .fill(viewModel.isConnected ? Color.green : Color.orange)
                 .frame(width: 8, height: 8)
             Text(viewModel.statusText)
                 .font(.caption)
@@ -81,120 +102,272 @@ struct CameraDemoView: View {
 // MARK: - View model
 
 @MainActor
-final class CameraDemoViewModel: ObservableObject, @MainActor FrameSourceDelegate {
-    func frameSource(_ source: any SimulatorCameraClient.FrameSource, didOutput pixelBuffer: CVPixelBuffer, at time: CMTime) {
-        self.handleFrame(pixelBuffer: pixelBuffer, time: time)
-    }
-    
+final class CameraDemoViewModel: ObservableObject {
 
     @Published var detectedRectangles: [VNRectangleObservation] = []
-    @Published var statusText = "Idle"
+    @Published var statusText = "Waiting for camera…"
     @Published var isConnected = false
     @Published var framesPerSecond: Double = 0
 
-    // Use the factory — in Simulator it returns a SimulatorCameraFrameSource,
-    // on device it returns a DeviceCameraFrameSource. Same interface.
-    private let source: FrameSource = SimulatorCameraSession(host: "127.0.0.1", port: 9876)
+    /// Observed directly by CameraPreviewView; frames are pushed into it by
+    /// CameraController via display(pixelBuffer:) — no session is started inside.
+    let previewModel = SimulatorCameraPreviewModel()
 
-    // If you want finer-grained control (e.g. to observe state changes) you
-    // can instead use SimulatorCameraSession directly in Simulator builds.
-    private let visionQueue = DispatchQueue(label: "com.sampleapp.vision", qos: .userInitiated)
-    private var pendingPreview: CVPixelBuffer?
-    var previewCallback: ((CVPixelBuffer) -> Void)?
+    private let controller: CameraController
 
+    init() {
+        let ctrl = CameraController(previewModel: previewModel)
+        controller = ctrl
+
+        // All callbacks are already dispatched to the main queue by CameraController.
+        ctrl.onConnected = { [weak self] connected in
+            self?.isConnected = connected
+            self?.statusText = connected ? "Streaming" : "Waiting for camera…"
+        }
+        ctrl.onFPS = { [weak self] fps in
+            self?.framesPerSecond = fps
+        }
+        ctrl.onRectangles = { [weak self] rects in
+            self?.detectedRectangles = rects
+        }
+    }
+
+    func start() { controller.start() }
+    func stop()  { controller.stop() }
+}
+
+// MARK: - Camera controller
+
+/// Manages the capture pipeline for both environments.
+///
+/// In the Simulator:
+///   - Creates a `SimulatorCameraOutput` (AVCaptureVideoDataOutput subclass).
+///   - Sets `self` as the sample-buffer delegate on `frameQueue`.
+///   - Calls `SimulatorCamera.start()` to open the TCP connection to the
+///     macOS companion app.
+///
+/// On device:
+///   - Builds a real `AVCaptureSession` with the back camera.
+///   - Adds a real `AVCaptureVideoDataOutput` with `self` as delegate on `frameQueue`.
+///
+/// The `AVCaptureVideoDataOutputSampleBufferDelegate` implementation is the
+/// same code path in both environments.
+final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+
+    // MARK: Callbacks — always invoked on the main queue.
+    var onConnected: ((Bool) -> Void)?
+    var onFPS: ((Double) -> Void)?
+    var onRectangles: (([VNRectangleObservation]) -> Void)?
+
+    // MARK: Private
+
+    private let previewModel: SimulatorCameraPreviewModel
+
+    /// Serial queue on which AVFoundation / SimulatorCameraOutput delivers frames.
+    private let frameQueue = DispatchQueue(
+        label: "com.sampleapp.camera.frames",
+        qos: .userInitiated
+    )
+    /// Separate serial queue for Vision — keeps frameQueue responsive.
+    private let visionQueue = DispatchQueue(
+        label: "com.sampleapp.camera.vision",
+        qos: .userInitiated
+    )
+
+    // Accessed exclusively on frameQueue — no locking needed.
     private var frameTimestamps: [CFAbsoluteTime] = []
+    private var didReportConnected = false
+
+    // MARK: Platform-specific capture state
+
+#if targetEnvironment(simulator)
+    /// Retained so the router subscription stays alive.
+    private var simOutput: SimulatorCameraOutput?
+#else
+    private var captureSession: AVCaptureSession?
+#endif
+
+    // MARK: Init
+
+    init(previewModel: SimulatorCameraPreviewModel) {
+        self.previewModel = previewModel
+        super.init()
+    }
+
+    // MARK: Start / Stop
 
     func start() {
-        statusText = "Connecting…"
-        source.delegate = self
-        source.start()
+#if targetEnvironment(simulator)
+        startSimulator()
+#else
+        startDevice()
+#endif
     }
 
     func stop() {
-        source.stop()
-        statusText = "Stopped"
-        isConnected = false
+#if targetEnvironment(simulator)
+        // Releasing simOutput triggers deinit → _Router.unsubscribeOutput — no more frames.
+        simOutput = nil
+        SimulatorCamera.stop()
+#else
+        // stopRunning() blocks; run it off the main thread.
+        let session = captureSession
+        captureSession = nil
+        frameQueue.async { session?.stopRunning() }
+#endif
+        // Reset connected state on the main queue.
+        let cb = onConnected
+        didReportConnected = false
+        DispatchQueue.main.async { cb?(false) }
     }
 
-    private func handleFrame(pixelBuffer: CVPixelBuffer, time: CMTime) {
-        // Update preview on main thread
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.isConnected = true
-            self.statusText = "Streaming"
-            self.updateFPS()
-            self.previewCallback?(pixelBuffer)
+    // MARK: AVCaptureVideoDataOutputSampleBufferDelegate
+    //
+    // Called on frameQueue by both AVCaptureVideoDataOutput (device) and
+    // SimulatorCameraOutput (simulator).
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
+        // Push frame to the preview view.
+        // display(pixelBuffer:) is nonisolated and dispatches to @MainActor internally.
+        previewModel.display(pixelBuffer: pixelBuffer)
+
+        // Signal first-frame connection on the main queue.
+        if !didReportConnected {
+            didReportConnected = true
+            let cb = onConnected
+            DispatchQueue.main.async { cb?(true) }
         }
 
-        // Run Vision off the main thread
-        visionQueue.async { [weak self] in
+        // FPS tracking — all state is on frameQueue, safe without locking.
+        let fps = updateFPS()
+        let fpsCb = onFPS
+        DispatchQueue.main.async { fpsCb?(fps) }
+
+        // Vision runs on a separate queue so it does not block frame delivery.
+        // CVPixelBuffer retains backing memory as long as the closure holds it.
+        visionQueue.async { [weak self, pixelBuffer] in
             self?.runRectangleDetection(on: pixelBuffer)
         }
     }
 
-    private func updateFPS() {
+    // MARK: Private — FPS
+
+    /// Must only be called from frameQueue.
+    private func updateFPS() -> Double {
         let now = CFAbsoluteTimeGetCurrent()
         frameTimestamps.append(now)
-        frameTimestamps = frameTimestamps.filter { now - $0 < 1.0 }
-        framesPerSecond = Double(frameTimestamps.count)
+        frameTimestamps.removeAll { now - $0 >= 1.0 }
+        return Double(frameTimestamps.count)
     }
 
-    // MARK: - Vision
+    // MARK: Private — Vision (runs on visionQueue)
 
     private func runRectangleDetection(on pixelBuffer: CVPixelBuffer) {
-        let request = VNDetectRectanglesRequest { [weak self] request, _ in
-            let observations = (request.results as? [VNRectangleObservation]) ?? []
-            DispatchQueue.main.async {
-                self?.detectedRectangles = observations
-            }
-        }
+        let request = VNDetectRectanglesRequest()
         request.maximumObservations = 5
-        request.minimumConfidence = 0.7
-        request.minimumAspectRatio = 0.2
+        request.minimumConfidence   = 0.7
+        request.minimumAspectRatio  = 0.2
 
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
         try? handler.perform([request])
+
+        let observations = (request.results as? [VNRectangleObservation]) ?? []
+        let cb = onRectangles
+        DispatchQueue.main.async { cb?(observations) }
     }
 
+    // MARK: Private — platform setup
+
+#if targetEnvironment(simulator)
+
+    private func startSimulator() {
+        let output = SimulatorCameraOutput()
+        // Delegate receives CMSampleBuffer on frameQueue — same threading as a
+        // real AVCaptureVideoDataOutput on device.
+        output.setSampleBufferDelegate(self, queue: frameQueue)
+        simOutput = output
+        SimulatorCamera.start()
+    }
+
+#else
+
+    private func startDevice() {
+        // Camera permission check — must not block the main thread.
+        AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+            guard let self, granted else { return }
+            self.frameQueue.async { self.setupAndStartSession() }
+        }
+    }
+
+    /// Called on frameQueue.
+    private func setupAndStartSession() {
+        let session = AVCaptureSession()
+        session.beginConfiguration()
+        session.sessionPreset = .hd1280x720
+
+        // Input: back wide-angle camera.
+        guard
+            let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+            let input  = try? AVCaptureDeviceInput(device: device),
+            session.canAddInput(input)
+        else {
+            session.commitConfiguration()
+            return
+        }
+        session.addInput(input)
+
+        // Output: raw pixel buffers delivered to frameQueue.
+        let output = AVCaptureVideoDataOutput()
+        output.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ]
+        output.alwaysCopiesSampleData = false
+        output.setSampleBufferDelegate(self, queue: frameQueue)
+
+        guard session.canAddOutput(output) else {
+            session.commitConfiguration()
+            return
+        }
+        session.addOutput(output)
+        session.commitConfiguration()
+
+        captureSession = session
+        session.startRunning()
+    }
+
+#endif
 }
 
-// MARK: - Preview view (UIViewRepresentable wrapping SimulatorCameraPreviewView)
+// MARK: - Camera preview view
 
-struct PreviewViewRepresentable: UIViewRepresentable {
-    
-    @ObservedObject var viewModel: CameraDemoViewModel
-    private let previewModel = SimulatorCameraPreviewModel()
-    
-    func makeCoordinator() -> Coordinator {
-        Coordinator(viewModel: viewModel)
-    }
+/// Renders frames pushed into `SimulatorCameraPreviewModel` by CameraController.
+/// Observing the model (not owning a session) means no duplicate network
+/// connections are started.
+struct CameraPreviewView: View {
+    @ObservedObject var model: SimulatorCameraPreviewModel
 
-    func makeUIView(context: Context) -> UIView {
-        let view = SimulatorCameraPreviewView(model: previewModel)
-        let hosting = UIHostingController(
-            rootView: view
-        )
-
-        context.coordinator.hostingController = hosting
-
-        // Route preview frames into SwiftUI view
-        viewModel.previewCallback = { [weak previewModel] pb in
-            previewModel?.display(pixelBuffer: pb)
-        }
-
-        return hosting.view
-    }
-
-    func updateUIView(_ uiView: UIView, context: Context) {}
-    class Coordinator {
-        var viewModel: CameraDemoViewModel
-        var hostingController: UIHostingController<SimulatorCameraPreviewView>?
-
-        init(viewModel: CameraDemoViewModel) {
-            self.viewModel = viewModel
+    var body: some View {
+        Group {
+            if let img = model.image {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Color.black
+                    .overlay {
+                        ProgressView("Waiting for camera…")
+                            .tint(.white)
+                            .foregroundStyle(.white)
+                    }
+            }
         }
     }
-    
 }
 
 // MARK: - Rectangle overlay
@@ -204,22 +377,23 @@ struct RectangleOverlay: View {
     let size: CGSize
 
     var body: some View {
-        // Vision's normalized coords: (0,0) bottom-left. UIKit: (0,0) top-left.
-        let path = Path { p in
-            let tl = convert(observation.topLeft)
-            let tr = convert(observation.topRight)
-            let br = convert(observation.bottomRight)
-            let bl = convert(observation.bottomLeft)
+        // Vision uses normalised coords with (0,0) at bottom-left;
+        // SwiftUI/UIKit have (0,0) at top-left — flip the Y axis.
+        Path { p in
+            let tl = flip(observation.topLeft)
+            let tr = flip(observation.topRight)
+            let br = flip(observation.bottomRight)
+            let bl = flip(observation.bottomLeft)
             p.move(to: tl)
             p.addLine(to: tr)
             p.addLine(to: br)
             p.addLine(to: bl)
             p.closeSubpath()
         }
-        return path.stroke(Color.yellow, lineWidth: 2)
+        .stroke(Color.yellow, lineWidth: 2)
     }
 
-    private func convert(_ point: CGPoint) -> CGPoint {
+    private func flip(_ point: CGPoint) -> CGPoint {
         CGPoint(x: point.x * size.width, y: (1 - point.y) * size.height)
     }
 }
