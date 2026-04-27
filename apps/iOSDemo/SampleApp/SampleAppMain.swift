@@ -20,8 +20,9 @@
 //
 //   Main queue / @MainActor
 //     • All @Published mutations, all UIKit/SwiftUI rendering.
-//     • SimulatorCameraPreviewModel.display(pixelBuffer:) is nonisolated
-//       and internally dispatches to MainActor — safe to call from frameQueue.
+//     • SimulatorCameraPreviewModel.display(pixelBuffer:) is nonisolated and
+//       enqueues directly to AVSampleBufferDisplayLayer (GPU compositor) from
+//       frameQueue — no main-thread hop for video rendering.
 
 import AVFoundation
 import CoreMedia
@@ -358,26 +359,15 @@ final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDele
 // MARK: - Camera preview view
 
 /// Renders frames pushed into `SimulatorCameraPreviewModel` by CameraController.
+/// Uses SimulatorCameraLayerView which renders directly via AVSampleBufferDisplayLayer
+/// — no UIImage conversion, no SwiftUI diff for video content.
 /// Observing the model (not owning a session) means no duplicate network
 /// connections are started.
 struct CameraPreviewView: View {
-    @ObservedObject var model: SimulatorCameraPreviewModel
+    var model: SimulatorCameraPreviewModel
 
     var body: some View {
-        Group {
-            if let img = model.image {
-                Image(uiImage: img)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                Color.black
-                    .overlay {
-                        ProgressView("Waiting for camera…")
-                            .tint(.white)
-                            .foregroundStyle(.white)
-                    }
-            }
-        }
+        SimulatorCameraLayerView(model: model, videoGravity: .resizeAspectFill)
     }
 }
 
