@@ -9,9 +9,10 @@ final class MacCameraReader: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
 
     private let session = AVCaptureSession()
     private let outputQueue = DispatchQueue(label: "com.simulatorcamera.maccamera", qos: .userInteractive)
-    private let ciContext = CIContext()
+    private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
-    /// Called on the main queue with each camera frame.
+    /// Called on `outputQueue` (NOT the main thread) with each camera frame.
+    /// Callers must dispatch to the main thread themselves if needed.
     var onFrame: ((CGImage, Double) -> Void)?
 
     var isRunning: Bool { session.isRunning }
@@ -39,7 +40,7 @@ final class MacCameraReader: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
         output.videoSettings = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
         ]
-//        output.alwaysCopiesSampleData = false
+        output.alwaysCopiesSampleData = false
         output.setSampleBufferDelegate(self, queue: outputQueue)
 
         guard session.canAddOutput(output) else {
@@ -77,8 +78,9 @@ final class MacCameraReader: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         let timestamp = CMTimeGetSeconds(pts)
 
-        DispatchQueue.main.async { [weak self] in
-            self?.onFrame?(cgImage, timestamp)
-        }
+        // Call directly on outputQueue — no main-thread hop.
+        // FrameStreamer.sendFrame is thread-safe and dispatches encoding
+        // to its own encodeQueue, so calling from here is safe and fast.
+        onFrame?(cgImage, timestamp)
     }
 }

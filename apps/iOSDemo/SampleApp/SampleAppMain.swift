@@ -177,6 +177,10 @@ final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDele
     // Accessed exclusively on frameQueue — no locking needed.
     private var frameTimestamps: [CFAbsoluteTime] = []
     private var didReportConnected = false
+    /// Tracks the last time a UI-update was dispatched to the main queue.
+    /// Coalesces FPS/connected dispatches to ≤10 per second so the main
+    /// runloop isn't flooded at the full camera frame rate.
+    private var lastUIDispatchTime: CFAbsoluteTime = 0
 
     // MARK: Platform-specific capture state
 
@@ -237,17 +241,24 @@ final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDele
         // display(pixelBuffer:) is nonisolated and dispatches to @MainActor internally.
         previewModel.display(pixelBuffer: pixelBuffer)
 
-        // Signal first-frame connection on the main queue.
-        if !didReportConnected {
-            didReportConnected = true
-            let cb = onConnected
-            DispatchQueue.main.async { cb?(true) }
-        }
-
         // FPS tracking — all state is on frameQueue, safe without locking.
         let fps = updateFPS()
-        let fpsCb = onFPS
-        DispatchQueue.main.async { fpsCb?(fps) }
+        let now = CFAbsoluteTimeGetCurrent()
+
+        // Signal first-frame connection, and rate-limit all other main-queue
+        // UI updates to ≤10/s so we don't flood the main runloop at 30 fps.
+        let needConnected = !didReportConnected
+        let needFPS = (now - lastUIDispatchTime >= 0.1)
+        if needConnected || needFPS {
+            if needConnected { didReportConnected = true }
+            if needFPS       { lastUIDispatchTime = now }
+            let connCb = needConnected ? onConnected : nil
+            let fpsCb  = needFPS       ? onFPS       : nil
+            DispatchQueue.main.async {
+                connCb?(true)
+                fpsCb?(fps)
+            }
+        }
 
         // Vision runs on a separate queue so it does not block frame delivery.
         // CVPixelBuffer retains backing memory as long as the closure holds it.

@@ -40,8 +40,11 @@ public final class SimulatorCameraOutput: AVCaptureVideoDataOutput {
 
     // Shadowed storage (the AV base class keeps its own pair, but we don't
     // invoke any AV machinery so we manage these independently).
-    private weak var shimDelegate: AVCaptureVideoDataOutputSampleBufferDelegate?
-    private var shimQueue: DispatchQueue?
+    // Protected by `shimLock` so `deliver` — called from the network queue
+    // after drainFrames removed the main-thread hop — can safely read them.
+    private let shimLock = NSLock()
+    private weak var _shimDelegate: AVCaptureVideoDataOutputSampleBufferDelegate?
+    private var _shimQueue: DispatchQueue?
 
     /// Router subscription token; released in `deinit`.
     fileprivate var routerToken: Int?
@@ -70,18 +73,19 @@ public final class SimulatorCameraOutput: AVCaptureVideoDataOutput {
         _ sampleBufferDelegate: AVCaptureVideoDataOutputSampleBufferDelegate?,
         queue sampleBufferCallbackQueue: DispatchQueue?
     ) {
-        self.shimDelegate = sampleBufferDelegate
-        self.shimQueue = sampleBufferCallbackQueue
+        shimLock.withLock {
+            self._shimDelegate = sampleBufferDelegate
+            self._shimQueue = sampleBufferCallbackQueue
+        }
         super.setSampleBufferDelegate(sampleBufferDelegate, queue: sampleBufferCallbackQueue)
     }
 
     /// Called by the router to hand a frame to the delegate as a
     /// `CMSampleBuffer` on the registered callback queue.
+    /// Safe to call from any queue (protected by `shimLock`).
     func deliver(_ pixelBuffer: CVPixelBuffer, at time: CMTime) {
-        guard
-            let delegate = shimDelegate,
-            let queue = shimQueue
-        else { return }
+        let (delegate, queue) = shimLock.withLock { (_shimDelegate, _shimQueue) }
+        guard let delegate, let queue else { return }
 
         queue.async { [weak self] in
             guard let self else { return }

@@ -95,7 +95,9 @@ public final class SimulatorCameraSession: FrameSource, @unchecked Sendable {
     }
 
     private func receiveLoop() {
-        connection?.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
+        // 256 KB is large enough to receive most frames (1280×720 JPEG ≈ 80–200 KB)
+        // in a single read, eliminating extra round-trips through the receive loop.
+        connection?.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) { [weak self] data, _, isComplete, error in
             guard let self else { return }
             if let data, !data.isEmpty {
                 self.decoder.append(data)
@@ -128,11 +130,10 @@ public final class SimulatorCameraSession: FrameSource, @unchecked Sendable {
                     height: frame.height
                 )
                 let time = CMTime(seconds: frame.timestamp, preferredTimescale: 1_000_000)
-                let pixelBuffer = pb
-                DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
-                    self.delegate?.frameSource(self, didOutput: pixelBuffer, at: time)
-                }
+                // Deliver directly on the network queue — no main-thread hop.
+                // Downstream sinks (SimulatorCameraOutput.deliver) dispatch to
+                // their own registered callback queues, keeping the main queue free.
+                delegate?.frameSource(self, didOutput: pb, at: time)
             }
         } catch {
             log.error("decode error: \(String(describing: error))")

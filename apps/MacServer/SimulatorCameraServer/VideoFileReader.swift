@@ -7,6 +7,9 @@ import Foundation
 
 /// Reads a video file and delivers CGImage frames at the video's native frame rate,
 /// looping continuously until stopped.
+///
+/// Frame delivery runs on an internal background queue (not the main thread).
+/// Callers' `onFrame` closure is invoked from that queue.
 final class VideoFileReader {
 
     enum State {
@@ -17,18 +20,27 @@ final class VideoFileReader {
 
     private(set) var state: State = .idle
     private var asset: AVAsset?
-    private var displayLink: CVDisplayLink?
-    private var frameQueue: DispatchQueue = DispatchQueue(label: "com.simulatorcamera.videoreader", qos: .userInteractive)
+
+    /// Internal queue used both for frame delivery timing and for `onFrame` callbacks.
+    private let frameQueue = DispatchQueue(
+        label: "com.simulatorcamera.videoreader",
+        qos: .userInteractive
+    )
 
     private var decodedFrames: [(CGImage, CMTime)] = []
     private var currentFrameIndex: Int = 0
-    private var lastFrameTime: CFAbsoluteTime = 0
     private var frameDuration: Double = 1.0 / 30.0
 
     var fpsLimit: Double = 30.0
 
-    /// Called on the main thread with each frame.
+    /// Called on `frameQueue` (NOT the main thread) with each frame.
+    /// Callers must dispatch to the appropriate thread themselves if needed.
     var onFrame: ((CGImage, Double) -> Void)?
+
+    // DispatchSourceTimer drives frame pacing on frameQueue — replaces the
+    // DispatchQueue.main.asyncAfter chain which tied delivery to main-queue
+    // availability and caused frame-rate jitter.
+    private var timer: DispatchSourceTimer?
 
     // MARK: - Public API
 
@@ -65,7 +77,7 @@ final class VideoFileReader {
         }
 
         var frames: [(CGImage, CMTime)] = []
-        let ciContext = CIContext()
+        let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
         while reader.status == .reading {
             guard let sampleBuffer = trackOutput.copyNextSampleBuffer(),
@@ -90,50 +102,42 @@ final class VideoFileReader {
         print("[VideoFileReader] Loaded \(frames.count) frames, frame duration: \(frameDuration)s")
     }
 
-    /// Start playing frames in a loop using a timer.
+    /// Start playing frames in a loop.
+    /// Uses a DispatchSourceTimer on `frameQueue` for accurate, jitter-free
+    /// pacing that is independent of main-thread availability.
     @MainActor
     func startPlaying() {
         guard !decodedFrames.isEmpty else { return }
         state = .playing
         currentFrameIndex = 0
-        lastFrameTime = CFAbsoluteTimeGetCurrent()
-        scheduleNextFrame()
+
+        let t = DispatchSource.makeTimerSource(queue: frameQueue)
+        // leeway: 2 ms — tight enough for smooth video, loose enough to let
+        // the OS coalesce wakeups and save power.
+        t.schedule(deadline: .now(), repeating: frameDuration, leeway: .milliseconds(2))
+        t.setEventHandler { [weak self] in
+            self?.deliverNextFrame()
+        }
+        t.resume()
+        timer = t
     }
 
     /// Stop playback.
     @MainActor
     func stopPlaying() {
         state = .stopped
+        timer?.cancel()
+        timer = nil
     }
 
-    // MARK: - Frame scheduling
+    // MARK: - Frame delivery (runs on frameQueue)
 
-    @MainActor
-    private func scheduleNextFrame() {
-        guard state == .playing else { return }
-
-        let now = CFAbsoluteTimeGetCurrent()
-        let elapsed = now - lastFrameTime
-        let delay = max(0, frameDuration - elapsed)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            self?.deliverFrame()
-        }
-    }
-
-    @MainActor
-    private func deliverFrame() {
-        guard state == .playing, !decodedFrames.isEmpty else { return }
-
+    private func deliverNextFrame() {
+        guard !decodedFrames.isEmpty else { return }
         let (image, pts) = decodedFrames[currentFrameIndex]
         let timestamp = CMTimeGetSeconds(pts)
-
+        // Deliver on frameQueue — FrameStreamer.sendFrame is thread-safe.
         onFrame?(image, timestamp)
-
-        // Advance and loop
         currentFrameIndex = (currentFrameIndex + 1) % decodedFrames.count
-        lastFrameTime = CFAbsoluteTimeGetCurrent()
-
-        scheduleNextFrame()
     }
 }

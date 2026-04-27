@@ -53,10 +53,13 @@ public final class SimulatorCameraPreviewModel: ObservableObject, FrameSourceDel
         Task { @MainActor in self.state = state }
     }
 
+    // Shared CIContext with GPU rendering — safe for concurrent reads; never
+    // allocate one per frame (CIContext allocation is ~1–5 ms).
+    nonisolated private static let sharedCIContext = CIContext(options: [.useSoftwareRenderer: false])
+
     nonisolated private static func uiImage(from pb: CVPixelBuffer) -> UIImage? {
         let ci = CIImage(cvPixelBuffer: pb)
-        let ctx = CIContext()
-        guard let cg = ctx.createCGImage(ci, from: ci.extent) else { return nil }
+        guard let cg = sharedCIContext.createCGImage(ci, from: ci.extent) else { return nil }
         return UIImage(cgImage: cg)
     }
 }
