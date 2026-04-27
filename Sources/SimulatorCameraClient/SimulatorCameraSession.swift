@@ -82,9 +82,12 @@ public final class SimulatorCameraSession: FrameSource, @unchecked Sendable {
             self.explicitlyStopped = true
             self.cancelReconnect()
             self.cancelConnection()
+            // Set state on queue — same thread that all other state mutations use.
+            self.state = .stopped
         }
-        #endif
+        #else
         state = .stopped
+        #endif
     }
 
     // MARK: Internals
