@@ -55,7 +55,7 @@ if [[ -d "$MAC_PROJ" ]]; then
     ok "Mac server launched — pick 'Mac Camera' and click Start."
 else
     warn "No .xcodeproj at $MAC_PROJ yet."
-    warn "Generate it with XcodeGen: brew install xcodegen && xcodegen generate --spec $MAC_SPEC"
+    warn "Generate it with XcodeGen: brew install xcodegen && xcodegen generate --spec \"$MAC_SPEC\""
 fi
 
 say "Booting iOS Simulator"
