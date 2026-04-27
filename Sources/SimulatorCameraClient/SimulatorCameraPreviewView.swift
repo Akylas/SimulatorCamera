@@ -128,7 +128,7 @@ public final class SimulatorCameraPreviewModel: ObservableObject, FrameSourceDel
         }
     }
 
-    private static func makeSampleBuffer(pixelBuffer: CVPixelBuffer, time: CMTime) -> CMSampleBuffer? {
+    nonisolated private static func makeSampleBuffer(pixelBuffer: CVPixelBuffer, time: CMTime) -> CMSampleBuffer? {
         var formatDesc: CMVideoFormatDescription?
         guard CMVideoFormatDescriptionCreateForImageBuffer(
             allocator: kCFAllocatorDefault,
