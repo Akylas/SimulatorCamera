@@ -21,7 +21,7 @@ final class MacCameraReader: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
 
     func configure() throws {
         session.beginConfiguration()
-        session.sessionPreset = .hd1280x720
+        session.sessionPreset = .low
 
         // Find default camera
         guard let device = AVCaptureDevice.default(for: .video) else {
@@ -40,7 +40,7 @@ final class MacCameraReader: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
         output.videoSettings = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
         ]
-        output.alwaysCopiesSampleData = false
+//        output.alwaysCopiesSampleData = false
         output.setSampleBufferDelegate(self, queue: outputQueue)
 
         guard session.canAddOutput(output) else {
