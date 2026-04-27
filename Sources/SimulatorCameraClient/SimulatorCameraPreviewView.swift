@@ -218,6 +218,7 @@ public struct SimulatorCameraLayerView: UIViewRepresentable {
 /// - `videoGravity` controls how the video fills the view (default: `.resizeAspectFill`).
 /// - Pass a pre-created `SimulatorCameraPreviewModel` to share the session with other
 ///   parts of your UI; if you omit it a fresh session is created automatically.
+@available(iOS 14.0, *)
 public struct SimulatorCameraPreviewView: View {
     @StateObject public var model: SimulatorCameraPreviewModel
     public var videoGravity: AVLayerVideoGravity
@@ -231,13 +232,20 @@ public struct SimulatorCameraPreviewView: View {
     }
 
     public var body: some View {
-        SimulatorCameraLayerView(model: model, videoGravity: videoGravity)
-            .overlay(alignment: .topLeading) { badge }
-            .overlay(alignment: .topTrailing) { fpsBadge }
-            .onAppear { model.start() }
-            .onDisappear { model.stop() }
+        if #available(iOS 15.0, *) {
+            SimulatorCameraLayerView(model: model, videoGravity: videoGravity)
+                .overlay(alignment: .topLeading) { badge }
+                .overlay(alignment: .topTrailing) { fpsBadge }
+                .onAppear { model.start() }
+                .onDisappear { model.stop() }
+        } else {
+            SimulatorCameraLayerView(model: model, videoGravity: videoGravity)
+                .onAppear { model.start() }
+                .onDisappear { model.stop() }
+        }
     }
 
+    @ViewBuilder
     private var badge: some View {
         let (txt, color): (String, Color) = {
             switch model.state {
@@ -248,21 +256,35 @@ public struct SimulatorCameraPreviewView: View {
             case .idle:          return ("Idle",              .gray)
             }
         }()
-        return Label(txt, systemImage: "circle.fill")
-            .labelStyle(.titleAndIcon)
+        let base = Label(txt, systemImage: "circle.fill")
             .font(.caption.bold())
-            .foregroundStyle(color)
             .padding(8)
-            .background(.thinMaterial, in: Capsule())
-            .padding(8)
-    }
 
+        if #available(iOS 15, *) {
+            base
+                .labelStyle(.titleAndIcon)
+                .foregroundStyle(color)
+                .background(.thinMaterial, in: Capsule())
+                .padding(8)
+        } else {
+            base
+                .labelStyle(.titleOnly)
+        }
+    }
+    
+    @ViewBuilder
     private var fpsBadge: some View {
-        Text(String(format: "%.1f FPS", model.fps))
+        let base = Text(String(format: "%.1f FPS", model.fps))
             .font(.caption.monospacedDigit())
             .padding(8)
-            .background(.thinMaterial, in: Capsule())
-            .padding(8)
+
+        if #available(iOS 15.0, *) {
+            base
+                .background(.thinMaterial, in: Capsule())
+                .padding(8)
+        } else {
+            base
+        }
     }
 }
 #endif

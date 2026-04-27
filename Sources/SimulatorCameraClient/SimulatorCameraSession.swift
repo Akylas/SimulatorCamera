@@ -27,6 +27,44 @@ import Foundation
 import Network
 import os.log
 
+final class AppLogger {
+    private let subsystem: String
+    private let category: String
+
+    @available(iOS 14.0, *)
+    private var logger: Logger {
+        Logger(subsystem: subsystem, category: category)
+    }
+
+    init(subsystem: String, category: String) {
+        self.subsystem = subsystem
+        self.category = category
+    }
+
+    func debug(_ message: String) {
+        if #available(iOS 14.0, *) {
+            logger.debug("\(message, privacy: .public)")
+        } else {
+            os_log("%{public}@", log: OSLog(subsystem: subsystem, category: category), type: .debug, message)
+        }
+    }
+    func info(_ message: String) {
+        if #available(iOS 14.0, *) {
+            logger.info("\(message, privacy: .public)")
+        } else {
+            os_log("%{public}@", log: OSLog(subsystem: subsystem, category: category), type: .info, message)
+        }
+    }
+
+    func error(_ message: String) {
+        if #available(iOS 14.0, *) {
+            logger.error("\(message, privacy: .public)")
+        } else {
+            os_log("%{public}@", log: OSLog(subsystem: subsystem, category: category), type: .error, message)
+        }
+    }
+}
+
 public final class SimulatorCameraSession: FrameSource, @unchecked Sendable {
 
     // MARK: Public API
@@ -95,7 +133,7 @@ public final class SimulatorCameraSession: FrameSource, @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.simulatorcamera.client.network")
     private let decoder = SCMFStreamDecoder()
     private var connection: NWConnection?
-    private let log = Logger(subsystem: "com.simulatorcamera.client", category: "session")
+    private let log = AppLogger(subsystem: "com.simulatorcamera.client", category: "session")
 
     // Reconnection state — accessed exclusively on `queue`.
     private var explicitlyStopped = false
