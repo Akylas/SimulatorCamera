@@ -42,6 +42,9 @@ final class VideoFileReader {
     // availability and caused frame-rate jitter.
     private var timer: DispatchSourceTimer?
 
+    // Static shared CIContext — GPU-accelerated; never allocate per call.
+    private static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+
     // MARK: - Public API
 
     /// Load and pre-decode all frames from a video file.
@@ -77,7 +80,8 @@ final class VideoFileReader {
         }
 
         var frames: [(CGImage, CMTime)] = []
-        let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+        // Static shared context — GPU-accelerated; CIContext allocation is ~1–5 ms
+        // so we must not create one per call.
 
         while reader.status == .reading {
             guard let sampleBuffer = trackOutput.copyNextSampleBuffer(),
@@ -88,7 +92,7 @@ final class VideoFileReader {
             let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
             let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
 
-            if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
+            if let cgImage = Self.ciContext.createCGImage(ciImage, from: ciImage.extent) {
                 frames.append((cgImage, pts))
             }
         }
