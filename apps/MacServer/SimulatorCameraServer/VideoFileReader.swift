@@ -1,12 +1,7 @@
-// VideoFileReader.swift
-// macOS Companion App — Decodes video files frame-by-frame using AVAssetReader.
-
 import AVFoundation
 import CoreImage
 import Foundation
 
-/// Reads a video file and delivers CGImage frames at the video's native frame rate,
-/// looping continuously until stopped.
 final class VideoFileReader {
 
     enum State {
@@ -16,124 +11,181 @@ final class VideoFileReader {
     }
 
     private(set) var state: State = .idle
+
     private var asset: AVAsset?
-    private var displayLink: CVDisplayLink?
-    private var frameQueue: DispatchQueue = DispatchQueue(label: "com.simulatorcamera.videoreader", qos: .userInteractive)
+    private var track: AVAssetTrack?
 
-    private var decodedFrames: [(CGImage, CMTime)] = []
-    private var currentFrameIndex: Int = 0
-    private var lastFrameTime: CFAbsoluteTime = 0
-    private var frameDuration: Double = 1.0 / 30.0
+    private var reader: AVAssetReader?
+    private var trackOutput: AVAssetReaderTrackOutput?
 
-    var fpsLimit: Double = 30.0
+    private let frameQueue = DispatchQueue(
+        label: "com.simulatorcamera.videoreader",
+        qos: .userInteractive
+    )
 
-    /// Called on the main thread with each frame.
+    /// Called on frameQueue
     var onFrame: ((CGImage, Double) -> Void)?
 
-    // MARK: - Public API
+    private static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
-    /// Load and pre-decode all frames from a video file.
-    /// For very long videos, consider streaming instead — this approach works well
-    /// for test clips up to ~60 seconds / 1080p.
+    private var startTime: CFAbsoluteTime = 0
+    private var firstPTS: CMTime?
+    private var isLooping = true
+
+    // MARK: - Load
+
     func loadVideo(url: URL) async throws {
         let asset = AVURLAsset(url: url)
         self.asset = asset
 
-        // Get video track
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw NSError(domain: "VideoFileReader", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "No video track found"])
+                          userInfo: [NSLocalizedDescriptionKey: "No video track"])
         }
 
-        let nominalFrameRate = try await track.load(.nominalFrameRate)
-        if nominalFrameRate > 0 {
-            frameDuration = 1.0 / Double(min(nominalFrameRate, Float(fpsLimit)))
+        self.track = track
+    }
+
+    // MARK: - Playback
+
+    func startPlaying(loop: Bool = true) {
+        guard state != .playing else { return }
+        state = .playing
+        isLooping = loop
+
+        frameQueue.async { [weak self] in
+            self?.startReaderAndLoop()
+        }
+    }
+
+    func stopPlaying() {
+        state = .stopped
+
+        frameQueue.async { [weak self] in
+            self?.reader?.cancelReading()
+            self?.reader = nil
+            self?.trackOutput = nil
+        }
+    }
+
+    // MARK: - Core Loop
+
+    private func startReaderAndLoop() {
+        do {
+            try setupReader()
+            playbackLoop()
+        } catch {
+            print("[VideoFileReader] Failed to start:", error)
+        }
+    }
+
+    private func playbackLoop() {
+        guard state == .playing else { return }
+
+        while state == .playing {
+            autoreleasepool {
+                guard let output = trackOutput else { return }
+
+                guard let sampleBuffer = output.copyNextSampleBuffer() else {
+                    handleEndOfStream()
+                    return
+                }
+
+                guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+                    return
+                }
+
+                let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+
+                if firstPTS == nil {
+                    firstPTS = pts
+                    startTime = CFAbsoluteTimeGetCurrent()
+                }
+
+                // 🕒 PTS-based timing
+                let elapsedPTS = CMTimeSubtract(pts, firstPTS!)
+                let targetTime = CMTimeGetSeconds(elapsedPTS)
+                let now = CFAbsoluteTimeGetCurrent() - startTime
+
+                let delay = targetTime - now
+                if delay > 0 {
+                    Thread.sleep(forTimeInterval: delay)
+                }
+
+                let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+
+                if let cgImage = Self.ciContext.createCGImage(ciImage, from: ciImage.extent) {
+                    onFrame?(cgImage, CMTimeGetSeconds(pts))
+                }
+            }
+        }
+    }
+
+    // MARK: - Reader Setup
+
+    private func setupReader() throws {
+        guard let asset = asset,
+              let track = track else {
+            throw NSError(domain: "VideoFileReader", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "Asset not loaded"])
         }
 
-        // Decode all frames
-        let reader = try AVAssetReader(asset: asset)
+        reader = try AVAssetReader(asset: asset)
+
         let outputSettings: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
         ]
-        let trackOutput = AVAssetReaderTrackOutput(track: track, outputSettings: outputSettings)
-        trackOutput.alwaysCopiesSampleData = false
-        reader.add(trackOutput)
 
-        guard reader.startReading() else {
-            throw reader.error ?? NSError(domain: "VideoFileReader", code: 2,
-                                           userInfo: [NSLocalizedDescriptionKey: "Failed to start reading"])
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: outputSettings)
+        output.alwaysCopiesSampleData = false
+
+        guard let reader = reader else { return }
+        reader.add(output)
+
+        if !reader.startReading() {
+            throw reader.error ?? NSError(domain: "VideoFileReader", code: 3,
+                                          userInfo: [NSLocalizedDescriptionKey: "Failed to start reader"])
         }
 
-        var frames: [(CGImage, CMTime)] = []
-        let ciContext = CIContext()
+        trackOutput = output
+        firstPTS = nil
+    }
 
-        while reader.status == .reading {
-            guard let sampleBuffer = trackOutput.copyNextSampleBuffer(),
-                  let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-                continue
+    // MARK: - Looping
+
+    private func handleEndOfStream() {
+        guard let reader = reader else { return }
+
+        switch reader.status {
+        case .completed:
+            if isLooping {
+                restartReader()
+            } else {
+                stopPlaying()
             }
 
-            let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-            let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        case .failed:
+            print("[VideoFileReader] Reader failed:", reader.error ?? "unknown")
+            stopPlaying()
 
-            if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
-                frames.append((cgImage, pts))
-            }
-        }
+        case .cancelled:
+            break
 
-        guard !frames.isEmpty else {
-            throw NSError(domain: "VideoFileReader", code: 3,
-                          userInfo: [NSLocalizedDescriptionKey: "No frames decoded"])
-        }
-
-        self.decodedFrames = frames
-        print("[VideoFileReader] Loaded \(frames.count) frames, frame duration: \(frameDuration)s")
-    }
-
-    /// Start playing frames in a loop using a timer.
-    @MainActor
-    func startPlaying() {
-        guard !decodedFrames.isEmpty else { return }
-        state = .playing
-        currentFrameIndex = 0
-        lastFrameTime = CFAbsoluteTimeGetCurrent()
-        scheduleNextFrame()
-    }
-
-    /// Stop playback.
-    @MainActor
-    func stopPlaying() {
-        state = .stopped
-    }
-
-    // MARK: - Frame scheduling
-
-    @MainActor
-    private func scheduleNextFrame() {
-        guard state == .playing else { return }
-
-        let now = CFAbsoluteTimeGetCurrent()
-        let elapsed = now - lastFrameTime
-        let delay = max(0, frameDuration - elapsed)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            self?.deliverFrame()
+        default:
+            break
         }
     }
 
-    @MainActor
-    private func deliverFrame() {
-        guard state == .playing, !decodedFrames.isEmpty else { return }
+    private func restartReader() {
+        reader?.cancelReading()
+        reader = nil
+        trackOutput = nil
 
-        let (image, pts) = decodedFrames[currentFrameIndex]
-        let timestamp = CMTimeGetSeconds(pts)
-
-        onFrame?(image, timestamp)
-
-        // Advance and loop
-        currentFrameIndex = (currentFrameIndex + 1) % decodedFrames.count
-        lastFrameTime = CFAbsoluteTimeGetCurrent()
-
-        scheduleNextFrame()
+        do {
+            try setupReader()
+        } catch {
+            print("[VideoFileReader] Restart failed:", error)
+            stopPlaying()
+        }
     }
 }

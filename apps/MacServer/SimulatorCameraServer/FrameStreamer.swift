@@ -6,6 +6,7 @@ import Foundation
 import Network
 import CoreImage
 import AppKit
+import UniformTypeIdentifiers
 
 /// Encodes a single SCMF frame message (header + JPEG payload).
 enum SCMFEncoder {
@@ -13,23 +14,32 @@ enum SCMFEncoder {
     /// Magic bytes: "SCMF" = 0x53434D46
     static let magic: UInt32 = 0x53434D46
 
-    /// Encode a CGImage into an SCMF message.
+    /// Encode a CGImage into an SCMF message using CGImageDestination
+    /// (hardware-accelerated on Apple Silicon, faster than NSBitmapImageRep).
     /// - Parameters:
     ///   - image: The source frame.
     ///   - timestamp: Presentation timestamp in seconds.
-    ///   - jpegQuality: 0.0–1.0 (default 0.8).
+    ///   - jpegQuality: 0.0–1.0 (default 0.7).
     /// - Returns: Raw bytes ready to send, or nil on failure.
     static func encode(
         image: CGImage,
         timestamp: Double,
-        jpegQuality: CGFloat = 0.8
+        jpegQuality: CGFloat = 0.7
     ) -> Data? {
-        // Convert CGImage → JPEG data via NSBitmapImageRep
-        let rep = NSBitmapImageRep(cgImage: image)
-        guard let jpegData = rep.representation(
-            using: .jpeg,
-            properties: [.compressionFactor: jpegQuality]
+        // Encode to JPEG via CGImageDestination (hardware-accelerated via Image I/O).
+        let jpegMutable = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(
+            jpegMutable,
+            UTType.jpeg.identifier as CFString,
+            1,
+            nil
         ) else { return nil }
+        let destOptions: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: jpegQuality
+        ]
+        CGImageDestinationAddImage(dest, image, destOptions as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        let jpegData = jpegMutable as Data
 
         let width  = UInt32(image.width)
         let height = UInt32(image.height)
@@ -58,8 +68,21 @@ enum SCMFEncoder {
 // MARK: - TCP Server
 
 /// A simple TCP server that accepts one client at a time and streams SCMF frames.
-@MainActor
-final class FrameStreamer: ObservableObject {
+///
+/// Threading model
+/// ---------------
+///   networkQueue  (serial, userInitiated)
+///     • NWListener and NWConnection callbacks run here.
+///     • `activeConnection` is read/written only on this queue.
+///
+///   encodeQueue   (serial, userInitiated)
+///     • JPEG encoding + NW send happen here so the main thread is never
+///       blocked by CPU-heavy frame encoding (~2–5 ms per frame at 720 p).
+///
+///   Main queue / @Published
+///     • All @Published mutations dispatch to the main queue so SwiftUI
+///       observes them correctly.
+final class FrameStreamer: ObservableObject, @unchecked Sendable {
 
     @Published var isListening = false
     @Published var isClientConnected = false
@@ -67,10 +90,29 @@ final class FrameStreamer: ObservableObject {
     @Published var framesSent: UInt64 = 0
 
     private var listener: NWListener?
-    private var activeConnection: NWConnection?
+
+    // `_activeConnection` is protected by `connectionLock` so it can be
+    // safely read from `encodeQueue` and written from `networkQueue`.
+    private let connectionLock = NSLock()
+    private var _activeConnection: NWConnection?
+    private var activeConnection: NWConnection? {
+        get { connectionLock.withLock { _activeConnection } }
+        set { connectionLock.withLock { _activeConnection = newValue } }
+    }
+
     var port: UInt16
 
-    // FPS tracking
+    // Dedicated queues — keep NW I/O and JPEG encoding off the main thread.
+    private let networkQueue = DispatchQueue(
+        label: "com.simulatorcamera.server.network",
+        qos: .userInitiated
+    )
+    private let encodeQueue = DispatchQueue(
+        label: "com.simulatorcamera.server.encode",
+        qos: .userInitiated
+    )
+
+    // FPS tracking — accessed only on encodeQueue.
     private var fpsTimestamps: [CFAbsoluteTime] = []
 
     init(port: UInt16 = 9876) {
@@ -93,90 +135,105 @@ final class FrameStreamer: ObservableObject {
         }
 
         listener?.stateUpdateHandler = { [weak self] state in
-            Task { @MainActor in
-                switch state {
-                case .ready:
-                    self?.isListening = true
-                    print("[FrameStreamer] Listening on port \(self?.port ?? 0)")
-                case .failed(let error):
-                    print("[FrameStreamer] Listener failed: \(error)")
-                    self?.isListening = false
-                default:
-                    break
-                }
+            guard let self else { return }
+            switch state {
+            case .ready:
+                DispatchQueue.main.async { self.isListening = true }
+                print("[FrameStreamer] Listening on port \(self.port)")
+            case .failed(let error):
+                print("[FrameStreamer] Listener failed: \(error)")
+                DispatchQueue.main.async { self.isListening = false }
+            default:
+                break
             }
         }
 
         listener?.newConnectionHandler = { [weak self] connection in
-            Task { @MainActor in
-                self?.handleNewConnection(connection)
-            }
+            self?.handleNewConnection(connection)
         }
 
-        listener?.start(queue: .main)
+        // NW callbacks run on networkQueue, keeping them off the main thread.
+        listener?.start(queue: networkQueue)
     }
 
     func stopServer() {
-        activeConnection?.cancel()
-        activeConnection = nil
+        networkQueue.async { [weak self] in
+            guard let self else { return }
+            self.activeConnection?.cancel()
+            self.activeConnection = nil
+        }
         listener?.cancel()
         listener = nil
-        isListening = false
-        isClientConnected = false
+        DispatchQueue.main.async { [weak self] in
+            self?.isListening = false
+            self?.isClientConnected = false
+        }
     }
 
-    // MARK: - Connection handling
+    // MARK: - Connection handling (runs on networkQueue)
 
     private func handleNewConnection(_ connection: NWConnection) {
-        // Only one client at a time
+        // Only one client at a time — cancel any previous connection.
         activeConnection?.cancel()
         activeConnection = connection
 
         connection.stateUpdateHandler = { [weak self] state in
-            Task { @MainActor in
-                switch state {
-                case .ready:
-                    self?.isClientConnected = true
-                    print("[FrameStreamer] Client connected")
-                case .failed, .cancelled:
-                    self?.isClientConnected = false
-                    print("[FrameStreamer] Client disconnected")
-                default:
-                    break
-                }
+            guard let self else { return }
+            switch state {
+            case .ready:
+                DispatchQueue.main.async { self.isClientConnected = true }
+                print("[FrameStreamer] Client connected")
+            case .failed, .cancelled:
+                DispatchQueue.main.async { self.isClientConnected = false }
+                print("[FrameStreamer] Client disconnected")
+            default:
+                break
             }
         }
 
-        connection.start(queue: .main)
+        connection.start(queue: networkQueue)
     }
 
     // MARK: - Send frame
+    //
+    // Can be called from any thread (including background frame-delivery queues).
+    // JPEG encoding and NW send are dispatched to encodeQueue so callers
+    // are never blocked by the encoding work.
 
-    /// Send a CGImage frame to the connected client.
-    /// Call this from the video decoder at the desired frame rate.
     func sendFrame(image: CGImage, timestamp: Double) {
-        guard let connection = activeConnection,
-              connection.state == .ready,
-              let data = SCMFEncoder.encode(image: image, timestamp: timestamp)
-        else { return }
+        // Dispatch encoding to encodeQueue; capture a strong reference to the
+        // connection under the lock so we don't hold the lock during encode.
+        encodeQueue.async { [weak self] in
+            guard let self else { return }
 
-        connection.send(content: data, completion: .contentProcessed { error in
-            if let error {
-                print("[FrameStreamer] Send error: \(error)")
-            }
-        })
+            // activeConnection is protected by connectionLock — safe to read here.
+            guard let connection = self.activeConnection,
+                  connection.state == .ready,
+                  let data = SCMFEncoder.encode(image: image, timestamp: timestamp)
+            else { return }
 
-        framesSent += 1
-        updateFPS()
+            connection.send(content: data, completion: .contentProcessed { error in
+                if let error {
+                    print("[FrameStreamer] Send error: \(error)")
+                }
+            })
+
+            self.recordFrameSent()
+        }
     }
 
-    // MARK: - FPS tracking
+    // MARK: - Stats (runs on encodeQueue)
 
-    private func updateFPS() {
+    private func recordFrameSent() {
         let now = CFAbsoluteTimeGetCurrent()
         fpsTimestamps.append(now)
-        // Keep only timestamps from the last second
-        fpsTimestamps = fpsTimestamps.filter { now - $0 < 1.0 }
-        currentFPS = Double(fpsTimestamps.count)
+        fpsTimestamps.removeAll { now - $0 >= 1.0 }
+        let fps = Double(fpsTimestamps.count)
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.framesSent += 1
+            self.currentFPS = fps
+        }
     }
 }

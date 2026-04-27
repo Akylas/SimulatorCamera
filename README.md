@@ -82,8 +82,10 @@ Or grab the signed & notarized `.dmg` from [Releases](../../releases). Or build 
 
 ```bash
 git clone https://github.com/dautovri/SimulatorCamera.git
-cd SimulatorCamera/apps/MacServer
-open SimulatorCameraServer.xcodeproj
+cd SimulatorCamera
+brew install xcodegen
+xcodegen generate --spec apps/MacServer/project.yml
+open apps/MacServer/SimulatorCameraServer.xcodeproj
 ```
 
 ## Usage
@@ -215,6 +217,9 @@ SimulatorCamera/
 
 ```bash
 ./scripts/bootstrap.sh   # swift build && swift test
+brew install xcodegen
+xcodegen generate --spec apps/MacServer/project.yml
+xcodegen generate --spec apps/iOSDemo/project.yml
 ```
 
 ## Status

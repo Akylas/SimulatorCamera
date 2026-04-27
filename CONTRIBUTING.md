@@ -14,8 +14,11 @@ Thanks for considering a contribution! SimulatorCamera is small and opinionated 
 ```bash
 git clone https://github.com/dautovri/SimulatorCamera.git
 cd SimulatorCamera
+brew install xcodegen
+xcodegen generate --spec apps/MacServer/project.yml
+xcodegen generate --spec apps/iOSDemo/project.yml
 swift test                          # SDK unit tests
-open apps/MacServer/SimCameraServer.xcodeproj   # Mac server
+open apps/MacServer/SimulatorCameraServer.xcodeproj   # Mac server
 open apps/iOSDemo/SimCameraDemo.xcodeproj        # Sample iOS app
 ```
 

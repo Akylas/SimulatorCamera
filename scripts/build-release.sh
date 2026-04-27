@@ -29,10 +29,18 @@ VERSION="${VERSION:-$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' 
 APP_NAME="SimulatorCameraServer"
 SCHEME="SimulatorCameraServer"
 PROJECT="apps/MacServer/SimulatorCameraServer.xcodeproj"
+PROJECT_SPEC="apps/MacServer/project.yml"
 BUILD_DIR="$REPO_ROOT/build"
 DIST_DIR="$REPO_ROOT/dist"
 ARCHIVE_PATH="$BUILD_DIR/$APP_NAME.xcarchive"
 EXPORT_PATH="$BUILD_DIR/export"
+
+if ! command -v xcodegen >/dev/null 2>&1; then
+    echo "✗ xcodegen is required to generate $PROJECT from $PROJECT_SPEC"
+    exit 1
+fi
+
+xcodegen generate --spec "$PROJECT_SPEC" >/dev/null
 
 rm -rf "$BUILD_DIR" "$DIST_DIR"
 mkdir -p "$BUILD_DIR" "$DIST_DIR"
