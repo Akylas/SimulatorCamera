@@ -6,16 +6,65 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class AppState: ObservableObject {
+    private let bookmarkKey = "selectedVideoBookmark"
     @Published var selectedVideoURL: URL?
     @Published var isStreaming = false
     @Published var statusMessage = "Idle"
     @Published var sourceMode: SourceMode = .videoFile
-    @Published var fpsLimit: Double = 30
+//    @Published var fpsLimit: Double = 30
     @Published var port: UInt16 = 9876
+    
+    init() {
+        restoreBookmark()
+    }
 
     enum SourceMode: String, CaseIterable {
         case videoFile = "Video File"
         case macCamera = "Mac Camera"
+    }
+    
+    func saveBookmark(for url: URL) {
+        do {
+            let bookmarkData = try url.bookmarkData(
+                options: .withSecurityScope,
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+            UserDefaults.standard.set(bookmarkData, forKey: bookmarkKey)
+        } catch {
+            print("Failed to save bookmark:", error)
+        }
+    }
+    
+    func restoreBookmark() {
+        guard let data = UserDefaults.standard.data(forKey: bookmarkKey) else {
+            return
+        }
+
+        var isStale = false
+
+        do {
+            let url = try URL(
+                resolvingBookmarkData: data,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+
+            if isStale {
+                // regenerate bookmark
+                saveBookmark(for: url)
+            }
+
+            if url.startAccessingSecurityScopedResource() {
+                selectedVideoURL = url
+            } else {
+                print("Failed to access security-scoped resource")
+            }
+
+        } catch {
+            print("Failed to restore bookmark:", error)
+        }
     }
 
     let streamer = FrameStreamer()
@@ -35,7 +84,7 @@ final class AppState: ObservableObject {
                 return
             }
             do {
-                videoReader.fpsLimit = fpsLimit
+//                videoReader.fpsLimit = fpsLimit
                 statusMessage = "Loading video..."
                 try await videoReader.loadVideo(url: url)
                 videoReader.onFrame = { [weak newStreamer] image, timestamp in
@@ -111,12 +160,12 @@ struct ContentView: View {
 
             // Settings
             HStack {
-                Text("FPS Limit:")
-                TextField("FPS", value: $state.fpsLimit, format: .number)
-                    .frame(width: 60)
-                    .disabled(state.isStreaming)
-
-                Spacer()
+//                Text("FPS Limit:")
+//                TextField("FPS", value: $state.fpsLimit, format: .number)
+//                    .frame(width: 60)
+//                    .disabled(state.isStreaming)
+//
+//                Spacer()
 
                 Text("Port:")
                 TextField("Port", value: $state.port, format: .number)
@@ -190,8 +239,9 @@ struct ContentView: View {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
 
-        if panel.runModal() == .OK {
-            state.selectedVideoURL = panel.url
+        if panel.runModal() == .OK, let url = panel.url {
+            state.selectedVideoURL = url
+            state.saveBookmark(for: url) 
         }
     }
 }
