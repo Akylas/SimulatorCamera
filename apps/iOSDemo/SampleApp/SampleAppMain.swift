@@ -213,6 +213,7 @@ final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDele
 #if targetEnvironment(simulator)
         // Releasing simOutput triggers deinit → _Router.unsubscribeOutput — no more frames.
         simOutput = nil
+        simOutput = nil
         SimulatorCamera.stop()
 #else
         // stopRunning() blocks; run it off the main thread.

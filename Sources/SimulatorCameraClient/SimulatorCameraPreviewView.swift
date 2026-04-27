@@ -78,7 +78,7 @@ public final class SimulatorCameraPreviewModel: ObservableObject, FrameSourceDel
     public func stop()  { session.stop() }
 
     // Called by SimulatorCameraLayerView when its UIView is created/destroyed.
-    func setDisplayLayer(_ layer: AVSampleBufferDisplayLayer?) {
+    nonisolated public func setDisplayLayer(_ layer: AVSampleBufferDisplayLayer?) {
         layerHolder.set(layer)
     }
 
