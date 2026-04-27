@@ -40,7 +40,7 @@ public final class SimulatorCameraSession: FrameSource, @unchecked Sendable {
 
     public func start() {
         #if targetEnvironment(simulator)
-        guard state == .idle || state == .stopped || state == .failed("") == false else { return }
+        guard state == .idle || state == .stopped || (state != .failed("")) else { return }
         connect()
         #else
         log.info("SimulatorCameraSession.start(): on-device no-op")

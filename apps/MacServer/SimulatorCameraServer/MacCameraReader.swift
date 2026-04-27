@@ -39,7 +39,7 @@ final class MacCameraReader: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
         output.videoSettings = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
         ]
-        output.alwaysCopiesSampleData = false
+//        output.alwaysCopiesSampleData = false
         output.setSampleBufferDelegate(self, queue: outputQueue)
 
         guard session.canAddOutput(output) else {

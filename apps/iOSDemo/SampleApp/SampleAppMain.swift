@@ -81,7 +81,11 @@ struct CameraDemoView: View {
 // MARK: - View model
 
 @MainActor
-final class CameraDemoViewModel: ObservableObject {
+final class CameraDemoViewModel: ObservableObject, @MainActor FrameSourceDelegate {
+    func frameSource(_ source: any SimulatorCameraClient.FrameSource, didOutput pixelBuffer: CVPixelBuffer, at time: CMTime) {
+        self.handleFrame(pixelBuffer: pixelBuffer, time: time)
+    }
+    
 
     @Published var detectedRectangles: [VNRectangleObservation] = []
     @Published var statusText = "Idle"
@@ -90,7 +94,7 @@ final class CameraDemoViewModel: ObservableObject {
 
     // Use the factory — in Simulator it returns a SimulatorCameraFrameSource,
     // on device it returns a DeviceCameraFrameSource. Same interface.
-    private let source: FrameSource = FrameSourceFactory.make()
+    private let source: FrameSource = SimulatorCameraSession(host: "127.0.0.1", port: 9876)
 
     // If you want finer-grained control (e.g. to observe state changes) you
     // can instead use SimulatorCameraSession directly in Simulator builds.
@@ -102,9 +106,8 @@ final class CameraDemoViewModel: ObservableObject {
 
     func start() {
         statusText = "Connecting…"
-        source.start { [weak self] pixelBuffer, time in
-            self?.handleFrame(pixelBuffer: pixelBuffer, time: time)
-        }
+        source.delegate = self
+        source.start()
     }
 
     func stop() {
@@ -158,20 +161,40 @@ final class CameraDemoViewModel: ObservableObject {
 // MARK: - Preview view (UIViewRepresentable wrapping SimulatorCameraPreviewView)
 
 struct PreviewViewRepresentable: UIViewRepresentable {
+    
     @ObservedObject var viewModel: CameraDemoViewModel
-
-    func makeUIView(context: Context) -> SimulatorCameraPreviewView {
-        let view = SimulatorCameraPreviewView()
-        view.videoGravity = .resizeAspectFill
-
-        // Route preview frames into the view
-        viewModel.previewCallback = { [weak view] pb in
-            view?.display(pixelBuffer: pb)
-        }
-        return view
+    private let previewModel = SimulatorCameraPreviewModel()
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(viewModel: viewModel)
     }
 
-    func updateUIView(_ uiView: SimulatorCameraPreviewView, context: Context) {}
+    func makeUIView(context: Context) -> UIView {
+        let view = SimulatorCameraPreviewView(model: previewModel)
+        let hosting = UIHostingController(
+            rootView: view
+        )
+
+        context.coordinator.hostingController = hosting
+
+        // Route preview frames into SwiftUI view
+        viewModel.previewCallback = { [weak previewModel] pb in
+            previewModel?.display(pixelBuffer: pb)
+        }
+
+        return hosting.view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
+    class Coordinator {
+        var viewModel: CameraDemoViewModel
+        var hostingController: UIHostingController<SimulatorCameraPreviewView>?
+
+        init(viewModel: CameraDemoViewModel) {
+            self.viewModel = viewModel
+        }
+    }
+    
 }
 
 // MARK: - Rectangle overlay
