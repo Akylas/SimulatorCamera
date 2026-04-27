@@ -1,0 +1,20 @@
+name: SimulatorCameraServer
+options:
+  deploymentTarget:
+    macOS: "13.0"
+settings:
+  base:
+    SWIFT_VERSION: 5.9
+targets:
+  SimulatorCameraServer:
+    type: application
+    platform: macOS
+    sources:
+      - path: SimulatorCameraServer
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.simulatorcamera.server
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: SimulatorCameraServer
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        INFOPLIST_KEY_NSCameraUsageDescription: SimulatorCameraServer uses the Mac camera to stream frames to the iOS Simulator.

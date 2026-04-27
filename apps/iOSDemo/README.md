@@ -11,6 +11,14 @@ Minimal iOS app showing how to consume `SimulatorCameraClient`. Run the Mac serv
 
 ## Usage
 
+Generate the demo project first:
+
+```bash
+brew install xcodegen
+xcodegen generate --spec apps/iOSDemo/project.yml
+open apps/iOSDemo/SimCameraDemo.xcodeproj
+```
+
 ```swift
 import SwiftUI
 import SimulatorCameraClient

@@ -1,0 +1,26 @@
+name: SimCameraDemo
+options:
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  SimulatorCamera:
+    path: ../..
+settings:
+  base:
+    SWIFT_VERSION: 5.9
+targets:
+  SimCameraDemo:
+    type: application
+    platform: iOS
+    sources:
+      - path: SampleApp
+    dependencies:
+      - package: SimulatorCamera
+        product: SimulatorCameraClient
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.simulatorcamera.demo
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: SimCameraDemo
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        TARGETED_DEVICE_FAMILY: "1,2"

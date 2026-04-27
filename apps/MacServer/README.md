@@ -4,7 +4,13 @@ SwiftUI macOS app that streams frames to iOS Simulator clients over `127.0.0.1:9
 
 ## Build
 
-Open the sources in Xcode as a Mac App target, or run from the root Xcode workspace.
+Generate the project, then open it in Xcode:
+
+```bash
+brew install xcodegen
+xcodegen generate --spec apps/MacServer/project.yml
+open apps/MacServer/SimulatorCameraServer.xcodeproj
+```
 
 ## Entitlements
 
@@ -23,4 +29,4 @@ The app runs sandboxed with:
 | `MacCameraReader.swift` | Built-in webcam source via `AVCaptureDevice` |
 | `VideoFileReader.swift` | Video file source via `AVAssetReader` |
 
-Sources are plain Swift files — add a new Mac App Xcode project in `apps/MacServer/SimCameraServer.xcodeproj` and drop them in.
+The checked-in `project.yml` generates `apps/MacServer/SimulatorCameraServer.xcodeproj`.

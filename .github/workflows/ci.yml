@@ -25,6 +25,33 @@ jobs:
       - name: Test
         run: swift test --parallel
 
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate app projects
+        run: |
+          xcodegen generate --spec apps/MacServer/project.yml
+          xcodegen generate --spec apps/iOSDemo/project.yml
+
+      - name: Build Mac server app
+        run: |
+          xcodebuild \
+            -project apps/MacServer/SimulatorCameraServer.xcodeproj \
+            -scheme SimulatorCameraServer \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Build iOS demo app
+        run: |
+          xcodebuild \
+            -project apps/iOSDemo/SimCameraDemo.xcodeproj \
+            -scheme SimCameraDemo \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
   lint:
     name: SwiftLint
     runs-on: macos-14

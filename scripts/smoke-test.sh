@@ -34,6 +34,12 @@ swift test
 ok "Unit tests pass."
 
 MAC_PROJ="apps/MacServer/SimulatorCameraServer.xcodeproj"
+MAC_SPEC="apps/MacServer/project.yml"
+if command -v xcodegen >/dev/null 2>&1 && [[ -f "$MAC_SPEC" ]]; then
+    say "Generating Mac project"
+    xcodegen generate --spec "$MAC_SPEC" >/dev/null
+fi
+
 if [[ -d "$MAC_PROJ" ]]; then
     say "xcodebuild -list ($MAC_PROJ)"
     xcodebuild -list -project "$MAC_PROJ" | head -40
@@ -49,8 +55,7 @@ if [[ -d "$MAC_PROJ" ]]; then
     ok "Mac server launched — pick 'Mac Camera' and click Start."
 else
     warn "No .xcodeproj at $MAC_PROJ yet."
-    warn "Scaffold it with Xcode: New Project → App → macOS → name 'SimulatorCameraServer',"
-    warn "then add the four Swift files under apps/MacServer/SimulatorCameraServer/ to the target."
+    warn "Generate it with XcodeGen: brew install xcodegen && xcodegen generate --spec $MAC_SPEC"
 fi
 
 say "Booting iOS Simulator"
