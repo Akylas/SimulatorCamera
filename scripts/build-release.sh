@@ -47,13 +47,23 @@ xcodegen generate --spec "$PROJECT_SPEC" >/dev/null
 rm -rf "$BUILD_DIR" "$DIST_DIR"
 mkdir -p "$BUILD_DIR" "$DIST_DIR"
 
-echo "▶︎ Archiving $APP_NAME $VERSION"
+ARCH="${ARCH:-arm64}"
+
+if [[ "$ARCH" == "x86_64" ]]; then
+    ARCH_FLAGS="ARCHS=x86_64"
+else
+    ARCH_FLAGS="ARCHS=arm64"
+fi
+
+echo "▶︎ Building for architecture: $ARCH"
 xcodebuild \
     -project "$PROJECT" \
     -scheme "$SCHEME" \
     -configuration Release \
     -destination 'generic/platform=macOS' \
     -archivePath "$ARCHIVE_PATH" \
+    $ARCH_FLAGS \
+    ONLY_ACTIVE_ARCH=NO \
     MARKETING_VERSION="$VERSION" \
     CURRENT_PROJECT_VERSION="$VERSION" \
     archive | xcpretty || true

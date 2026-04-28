@@ -1,12 +1,16 @@
 cask "simulatorcamera" do
   version "0.2.0"
-  sha256 "REPLACE_WITH_ACTUAL_DMG_SHA256_ON_RELEASE"
+  if Hardware::CPU.arm?
+    sha256 "ARM64_SHA256"
+    url "https://github.com/Akylas/SimulatorCamera/releases/download/v#{version}/SimulatorCamera-#{version}-arm64.dmg"
+  else
+    sha256 "X86_64_SHA256"
+    url "https://github.com/Akylas/SimulatorCamera/releases/download/v#{version}/SimulatorCamera-#{version}-x86_64.dmg"
+  end
 
-  url "https://github.com/farfromrefug/SimulatorCamera/releases/download/v#{version}/SimulatorCamera-#{version}.dmg",
-      verified: "github.com/dautovri/SimulatorCamera/"
   name "SimulatorCamera"
   desc "Stream a real Mac camera, video file, or screen region into the iOS Simulator"
-  homepage "https://github.com/farfromrefug/SimulatorCamera"
+  homepage "https://github.com/Akylas/SimulatorCamera"
 
   livecheck do
     url :url

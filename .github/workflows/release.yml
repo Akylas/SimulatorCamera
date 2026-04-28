@@ -33,19 +33,21 @@ jobs:
 
   build-and-release:
     name: Build, notarize & release
-    runs-on: macos-14
+    runs-on: macos-15
     needs: test-spm
     timeout-minutes: 60
     permissions:
       contents: write
 
+    strategy:
+      matrix:
+        arch: [arm64, x86_64]
+
+
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -155,12 +157,12 @@ jobs:
       - name: Update cask version
         if: inputs.create_release
         run: |
-          NEW_VERSION="${{ steps.version.outputs.new }}"
-          sed -i '' "s/  version \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/  version \"${NEW_VERSION}\"/" \
-            Casks/simulatorcamera.rb
-          # Reset sha256 to a placeholder until we have the real value after the build
-          sed -i '' 's/  sha256 "[^"]*"/  sha256 "PENDING"/' \
-            Casks/simulatorcamera.rb
+          VERSION="${{ steps.version.outputs.new }}"
+          ARM_SHA=$(awk "/arm64.dmg/ { print \$1 }" dist/SimulatorCamera-${VERSION}-arm64.sha256)
+          X86_SHA=$(awk "/x86_64.dmg/ { print \$1 }" dist/SimulatorCamera-${VERSION}-x86_64.sha256)
+
+          sed -i '' "s/ARM64_SHA256/${ARM_SHA}/" Casks/simulatorcamera.rb
+          sed -i '' "s/X86_64_SHA256/${X86_SHA}/" Casks/simulatorcamera.rb
 
       - name: Install xcpretty
         run: gem install xcpretty --no-document
@@ -199,7 +201,22 @@ jobs:
           VERSION:          ${{ steps.version.outputs.new }}
           APPLE_TEAM_ID:    ${{ secrets.APPLE_TEAM_ID }}
           KEYCHAIN_PROFILE: SimulatorCameraNotary
+          ARCH:             ${{ matrix.arch }}
         run: ./scripts/build-release.sh
+        
+      - name: Rename artifacts for architecture
+        run: |
+          VERSION="${{ steps.version.outputs.new }}"
+          ARCH="${{ matrix.arch }}"
+
+          mv "dist/SimulatorCamera-${VERSION}.dmg" \
+            "dist/SimulatorCamera-${VERSION}-${ARCH}.dmg"
+
+          mv "dist/SimulatorCamera-${VERSION}.zip" \
+            "dist/SimulatorCamera-${VERSION}-${ARCH}.zip"
+
+          mv "dist/SimulatorCamera-${VERSION}.sha256" \
+            "dist/SimulatorCamera-${VERSION}-${ARCH}.sha256"
 
       - name: Update cask sha256
         if: inputs.create_release
@@ -217,11 +234,11 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mac-release-${{ steps.version.outputs.new }}
+          name: mac-release-${{ steps.version.outputs.new }}-${{ matrix.arch }}
           path: dist/*
 
       - name: Commit version bump
-        if: inputs.create_release
+        if: inputs.create_release && matrix.arch == 'arm64'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -238,7 +255,4 @@ jobs:
           name:             "SimulatorCamera ${{ steps.version.outputs.tag }}"
           body_path:        ${{ steps.notes.outputs.file }}
           draft:            false
-          files: |
-            dist/SimulatorCamera-${{ steps.version.outputs.new }}.dmg
-            dist/SimulatorCamera-${{ steps.version.outputs.new }}.zip
-            dist/SimulatorCamera-${{ steps.version.outputs.new }}.sha256
+          files: dist/*
