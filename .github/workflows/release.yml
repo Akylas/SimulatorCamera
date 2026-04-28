@@ -1,41 +1,170 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version to release (e.g. 0.2.0)"
+      bump_type:
+        description: "Version bump type"
         required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      create_release:
+        description: "Create GitHub release and tag"
+        required: false
+        type: boolean
+        default: true
 
 jobs:
-  build-mac:
-    name: Build & notarize Mac app
+  test-spm:
+    name: Swift Package tests
     runs-on: macos-14
-    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+      - name: swift test
+        run: swift test
 
-    env:
-      VERSION: ${{ github.event.inputs.version || github.ref_name }}
+  build-and-release:
+    name: Build, notarize & release
+    runs-on: macos-14
+    needs: test-spm
+    timeout-minutes: 60
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Normalize VERSION (strip leading v)
-        run: echo "VERSION=${VERSION#v}" >> "$GITHUB_ENV"
+        with:
+          fetch-depth: 0
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Compute new version
+        if: inputs.create_release
+        id: version
+        run: |
+          # Latest semver tag, falling back to most recent version in CHANGELOG.md
+          CURRENT=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 | sed 's/^v//')
+          if [[ -z "$CURRENT" ]]; then
+            CURRENT=$(grep -oE '\[([0-9]+\.[0-9]+\.[0-9]+)\]' CHANGELOG.md | head -1 | tr -d '[]')
+          fi
+          # Falls back to 0.0.0 when no tag or CHANGELOG entry exists (first release from scratch)
+          [[ -z "$CURRENT" ]] && CURRENT="0.0.0"
+
+          IFS='.' read -r MAJ MIN PAT <<< "$CURRENT"
+          case "${{ inputs.bump_type }}" in
+            major) MAJ=$((MAJ+1)); MIN=0; PAT=0 ;;
+            minor) MIN=$((MIN+1)); PAT=0 ;;
+            *)     PAT=$((PAT+1)) ;;
+          esac
+
+          NEW="${MAJ}.${MIN}.${PAT}"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW"         >> "$GITHUB_OUTPUT"
+          echo "tag=v$NEW"        >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        if: inputs.create_release
+        id: notes
+        run: |
+          CURRENT_TAG="v${{ steps.version.outputs.current }}"
+          NEW_VERSION="${{ steps.version.outputs.new }}"
+          NOTES_FILE="$RUNNER_TEMP/release_notes.md"
+
+          if git rev-parse "$CURRENT_TAG" >/dev/null 2>&1; then
+            LOG=$(git log "${CURRENT_TAG}..HEAD" --format="%s" 2>/dev/null || true)
+          else
+            LOG=$(git log --format="%s" 2>/dev/null || true)
+          fi
+
+          BREAKING=$(printf '%s\n' "$LOG" | grep -E '^(feat|fix|refactor|perf)(\([^)]+\))?!:' || true)
+          FEATURES=$(printf '%s\n' "$LOG" | grep -E '^feat(\([^)]+\))?[!]?:' | grep -v '!:' || true)
+          FIXES=$(printf '%s\n' "$LOG" | grep -E '^fix(\([^)]+\))?[!]?:' | grep -v '!:' || true)
+          OTHERS=$(printf '%s\n' "$LOG" | grep -E '^(chore|docs|style|refactor|perf|test|ci)(\([^)]+\))?:' || true)
+
+          {
+            if [[ -n "$BREAKING" ]]; then
+              printf '### ⚠️ Breaking Changes\n\n'
+              printf '%s\n' "$BREAKING" | sed 's/^/- /'
+              printf '\n'
+            fi
+            if [[ -n "$FEATURES" ]]; then
+              printf '### ✨ Features\n\n'
+              printf '%s\n' "$FEATURES" | sed 's/^/- /'
+              printf '\n'
+            fi
+            if [[ -n "$FIXES" ]]; then
+              printf '### 🐛 Bug Fixes\n\n'
+              printf '%s\n' "$FIXES" | sed 's/^/- /'
+              printf '\n'
+            fi
+            if [[ -n "$OTHERS" ]]; then
+              printf '### 🔧 Other Changes\n\n'
+              printf '%s\n' "$OTHERS" | sed 's/^/- /'
+              printf '\n'
+            fi
+            if [[ -z "$BREAKING$FEATURES$FIXES$OTHERS" ]]; then
+              printf '<!-- no conventional commits found since %s -->\n\n' "$CURRENT_TAG"
+            fi
+            printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' \
+              "${{ github.repository }}" "$CURRENT_TAG" "v${NEW_VERSION}"
+          } > "$NOTES_FILE"
+
+          echo "file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Update CHANGELOG.md
+        run: |
+          cat > /tmp/update_changelog.py << 'PYEOF'
+          import sys, re
+
+          new_version = sys.argv[1]
+          today = sys.argv[2]
+          notes_path = sys.argv[3]
+
+          notes = open(notes_path).read().strip()
+          changelog = open("CHANGELOG.md").read()
+
+          new_entry = "## [{}] — {}\n\n{}\n\n".format(new_version, today, notes)
+          updated = re.sub(
+              r"(## \[Unreleased\]\n)",
+              r"\1\n" + new_entry,
+              changelog,
+              count=1,
+          )
+          open("CHANGELOG.md", "w").write(updated)
+          PYEOF
+
+          python3 /tmp/update_changelog.py \
+            "${{ steps.version.outputs.new }}" \
+            "$(date +%Y-%m-%d)" \
+            "${{ steps.notes.outputs.file }}"
+
+      - name: Update cask version
+        if: inputs.create_release
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.new }}"
+          sed -i '' "s/  version \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/  version \"${NEW_VERSION}\"/" \
+            Casks/simulatorcamera.rb
+          # Reset sha256 to a placeholder until we have the real value after the build
+          sed -i '' 's/  sha256 "[^"]*"/  sha256 "PENDING"/' \
+            Casks/simulatorcamera.rb
 
       - name: Install xcpretty
         run: gem install xcpretty --no-document
 
       - name: Import Developer ID certificate
         env:
-          MAC_CERTIFICATE_P12_BASE64: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
-          MAC_CERTIFICATE_PASSWORD:   ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD:          ${{ secrets.KEYCHAIN_PASSWORD }}
+          MAC_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE }}
+          MAC_CERTIFICATE_PASSWORD:   ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD:          ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
         run: |
           echo "$MAC_CERTIFICATE_P12_BASE64" | base64 --decode > cert.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
@@ -49,38 +178,62 @@ jobs:
               -s -k "$KEYCHAIN_PASSWORD" build.keychain
           rm cert.p12
 
-      - name: Build, sign, notarize, package
+      - name: Store notarytool credentials in keychain
         env:
-          APPLE_DEVELOPER_ID:  ${{ secrets.APPLE_DEVELOPER_ID }}
-          APPLE_ID:            ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD:  ${{ secrets.APPLE_APP_PASSWORD }}
-          APPLE_TEAM_ID:       ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID:           ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID:      ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool store-credentials "SimulatorCameraNotary" \
+              --apple-id  "$APPLE_ID" \
+              --password  "$APPLE_APP_PASSWORD" \
+              --team-id   "$APPLE_TEAM_ID"
+
+      - name: Build, sign, notarize & package
+        env:
+          VERSION:          ${{ steps.version.outputs.new }}
+          APPLE_TEAM_ID:    ${{ secrets.APPLE_TEAM_ID }}
+          KEYCHAIN_PROFILE: SimulatorCameraNotary
         run: ./scripts/build-release.sh
+
+      - name: Update cask sha256
+        if: inputs.create_release
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.new }}"
+          SHA256=$(awk "/SimulatorCamera-${NEW_VERSION}\.dmg/ { print \$1 }" \
+            "dist/SimulatorCamera-${NEW_VERSION}.sha256")
+          if [[ -z "$SHA256" ]]; then
+            echo "::error::Could not find sha256 for SimulatorCamera-${NEW_VERSION}.dmg" >&2
+            exit 1
+          fi
+          sed -i '' "s/  sha256 \"PENDING\"/  sha256 \"${SHA256}\"/" \
+            Casks/simulatorcamera.rb
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mac-release-${{ env.VERSION }}
+          name: mac-release-${{ steps.version.outputs.new }}
           path: dist/*
 
-      - name: Create/Update GitHub Release
-        uses: softprops/action-gh-release@v3
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          name: SimulatorCamera v${{ env.VERSION }}
-          body_path: docs/RELEASE_NOTES_v${{ env.VERSION }}.md
-          draft: true
-          files: |
-            dist/SimulatorCamera-${{ env.VERSION }}.dmg
-            dist/SimulatorCamera-${{ env.VERSION }}.zip
-            dist/SimulatorCamera-${{ env.VERSION }}.sha256
+      - name: Commit version bump
+        if: inputs.create_release
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md Casks/simulatorcamera.rb
+          git commit -m "release: v${{ steps.version.outputs.new }}"
+          git push
 
-  test-spm:
-    name: Swift Package tests
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app
-      - name: swift test
-        run: swift test
+      - name: Create tag & GitHub release
+        if: inputs.create_release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name:         ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.ref_name }}
+          name:             "SimulatorCamera ${{ steps.version.outputs.tag }}"
+          body_path:        ${{ steps.notes.outputs.file }}
+          draft:            false
+          files: |
+            dist/SimulatorCamera-${{ steps.version.outputs.new }}.dmg
+            dist/SimulatorCamera-${{ steps.version.outputs.new }}.zip
+            dist/SimulatorCamera-${{ steps.version.outputs.new }}.sha256

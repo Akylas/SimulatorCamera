@@ -3,91 +3,96 @@
 This runbook cuts a signed, notarized, Homebrew-installable release of the
 Mac companion app and the iOS Swift Package.
 
-## Prereqs (one-time per machine)
+## Prereqs (one-time per repo)
 
-- Xcode 15.4+ with a configured Apple ID that has Developer ID signing privileges.
-- A stored `notarytool` profile so CI and local builds don't need to handle secrets inline:
-  ```
-  xcrun notarytool store-credentials "SimulatorCameraNotary" \
-      --apple-id "you@example.com" \
-      --team-id  "ABCDE12345" \
-      --password "app-specific-password"
-  ```
-- GitHub secrets configured on the repo:
-  - `MAC_CERTIFICATE_P12_BASE64`, `MAC_CERTIFICATE_PASSWORD`, `KEYCHAIN_PASSWORD`
-  - `APPLE_DEVELOPER_ID`, `APPLE_ID`, `APPLE_APP_PASSWORD`, `APPLE_TEAM_ID`
+GitHub secrets must be configured on the repo:
 
-## Cut a release
+| Secret | Purpose |
+|---|---|
+| `MAC_CERTIFICATE_P12_BASE64` | Developer ID certificate (base64-encoded .p12) |
+| `MAC_CERTIFICATE_PASSWORD` | Password for the .p12 file |
+| `KEYCHAIN_PASSWORD` | Ephemeral CI keychain password |
+| `APPLE_ID` | Apple ID used for notarization |
+| `APPLE_APP_PASSWORD` | App-specific password for `notarytool` |
+| `APPLE_TEAM_ID` | 10-character Apple team ID |
 
-1. **Pick a version** (`MAJOR.MINOR.PATCH`). For 0.x we bump MINOR for new
-   features, PATCH for fixes. Source of truth: `CHANGELOG.md`.
+## Cut a release (automated)
 
-2. **Prep the repo**
-   ```
-   git checkout main
-   git pull
-   ```
-   - Move `## [Unreleased]` content into a new `## [X.Y.Z] — YYYY-MM-DD`
-     section in `CHANGELOG.md`.
-   - Write `docs/RELEASE_NOTES_vX.Y.Z.md` (user-facing, not a dupe of the
-     changelog — lead with headlines, link back to the changelog for detail).
-   - Bump the cask version in `Casks/simulatorcamera.rb` and leave the
-     `sha256` as a placeholder (step 5 fills it in).
+The `Release` workflow in `.github/workflows/release.yml` handles the full
+release lifecycle. Trigger it from the GitHub Actions tab:
 
-3. **Local dry run**
-   ```
-   SKIP_NOTARIZE=1 VERSION=X.Y.Z ./scripts/build-release.sh
-   open dist/
-   ```
-   Sanity-check the `.app` launches from the `.dmg`.
+1. **Go to** Actions → Release → **Run workflow**.
+2. **Choose the bump type**: `patch`, `minor`, or `major`.  
+   The workflow reads the latest semver tag (or falls back to `CHANGELOG.md`)
+   and computes the new version automatically.
+3. **Toggle "Create GitHub release and tag"** (default: on).  
+   Turn this off for a dry-run that builds and uploads artifacts without
+   publishing a release.
+4. **Click Run workflow**.
 
-4. **Tag and push**
-   ```
-   git commit -am "release: vX.Y.Z"
-   git tag -s vX.Y.Z -m "SimulatorCamera vX.Y.Z"
-   git push origin main vX.Y.Z
-   ```
-   The `Release` workflow picks up the tag, builds, notarizes, and uploads
-   a **draft** GitHub Release with the `.dmg`, `.zip`, and checksums.
+### What the workflow does
 
-5. **Update the Homebrew cask**
-   - Grab the DMG sha256 from `dist/SimulatorCamera-X.Y.Z.sha256` (or the
-     Release page).
-   - Commit the updated `Casks/simulatorcamera.rb` to the tap repo
-     (`dautovri/homebrew-tap`):
-     ```
-     brew bump-cask-pr \
-         --version X.Y.Z \
-         --sha256 <dmg-sha256> \
-         dautovri/tap/simulatorcamera
-     ```
+| Step | Description |
+|---|---|
+| Swift Package tests | Runs `swift test` as a gate before the build. |
+| Compute version | Determines the current version from git tags and bumps it. |
+| Generate release notes | Parses conventional commits since the last tag into Breaking / Features / Fixes / Other sections. |
+| Update `CHANGELOG.md` | Inserts a new versioned section below `## [Unreleased]`. |
+| Update cask | Bumps `version` in `Casks/simulatorcamera.rb`; fills in the real `sha256` after the build. |
+| Import certificate | Imports the Developer ID cert into an ephemeral keychain. |
+| Store notarytool profile | Stores Apple credentials under the `SimulatorCameraNotary` keychain profile once, so the build step never handles raw secrets. |
+| Build, sign, notarize & package | Runs `scripts/build-release.sh` using the stored keychain profile. |
+| Commit version bump | Commits `CHANGELOG.md` and `Casks/simulatorcamera.rb` and pushes to the triggering branch. |
+| Create release | Creates the git tag and publishes the GitHub Release with the generated notes and `.dmg` / `.zip` / `.sha256` attachments (when `create_release` is true). |
 
-6. **Publish the draft Release**
-   - Double-check the release notes render.
-   - Un-draft.
+## Local dry run
 
-7. **Smoke test**
-   ```
-   brew update
-   brew upgrade --cask simulatorcamera
-   open -a SimulatorCameraServer
-   ```
-   Then in a throwaway iOS app:
-   ```swift
-   import SimulatorCameraClient
+```sh
+SKIP_NOTARIZE=1 VERSION=X.Y.Z ./scripts/build-release.sh
+open dist/
+```
 
-   SimulatorCamera.configure()
-   SimulatorCamera.start()
-   ```
-   Verify frames arrive at 25–30 FPS.
+Sanity-check that the `.app` launches from the `.dmg` before triggering
+the full workflow.
 
-8. **Announce**
-   - Tweet / LinkedIn / /r/iOSProgramming post linking to the Release.
-   - Update `docs/ROADMAP.md` by moving the just-shipped bullets into the
-     "Shipped" section and drafting the next milestone.
+## Update the Homebrew tap
+
+After a successful release the `Casks/simulatorcamera.rb` in **this repo**
+is updated automatically. You still need to update the **tap repo**
+(`dautovri/homebrew-tap`) separately:
+
+```sh
+brew bump-cask-pr \
+    --version X.Y.Z \
+    --sha256 <dmg-sha256> \
+    dautovri/tap/simulatorcamera
+```
+
+## Smoke test
+
+```sh
+brew update
+brew upgrade --cask simulatorcamera
+open -a SimulatorCameraServer
+```
+
+Then in a throwaway iOS app:
+```swift
+import SimulatorCameraClient
+
+SimulatorCamera.configure()
+SimulatorCamera.start()
+```
+Verify frames arrive at 25–30 FPS.
 
 ## If something goes wrong
 
-- **Notarization stuck.** `xcrun notarytool log <submission-id> --keychain-profile SimulatorCameraNotary` — Apple tells you exactly which rule tripped.
-- **CI artifacts wrong version.** The workflow normalizes `v0.2.0 → 0.2.0`; if you see mismatched filenames the tag was probably pushed without a `v` prefix.
-- **Need to yank a release.** Delete the tag, delete the Release, revert the cask commit. Existing users stay on whatever they have; Homebrew won't downgrade by default.
+- **Notarization stuck.** Check the log:  
+  `xcrun notarytool log <submission-id> --keychain-profile SimulatorCameraNotary`  
+  Apple tells you exactly which rule tripped.
+- **CI artifacts wrong version.** The workflow derives the version from git
+  tags; if filenames look wrong, check whether an unexpected semver tag
+  exists in the repo (`git tag --sort=-v:refname | head -5`).
+- **Need to yank a release.** Delete the tag, delete the GitHub Release, and
+  revert the version-bump commit. Existing users stay on whatever they have;
+  Homebrew won't downgrade by default.
