@@ -48,6 +48,7 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
       - name: Compute new version
+        if: inputs.create_release
         id: version
         run: |
           # Latest semver tag, falling back to most recent version in CHANGELOG.md
@@ -71,6 +72,7 @@ jobs:
           echo "tag=v$NEW"        >> "$GITHUB_OUTPUT"
 
       - name: Generate release notes
+        if: inputs.create_release
         id: notes
         run: |
           CURRENT_TAG="v${{ steps.version.outputs.current }}"
@@ -146,6 +148,7 @@ jobs:
             "${{ steps.notes.outputs.file }}"
 
       - name: Update cask version
+        if: inputs.create_release
         run: |
           NEW_VERSION="${{ steps.version.outputs.new }}"
           sed -i '' "s/  version \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/  version \"${NEW_VERSION}\"/" \
@@ -159,9 +162,9 @@ jobs:
 
       - name: Import Developer ID certificate
         env:
-          MAC_CERTIFICATE_P12_BASE64: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
-          MAC_CERTIFICATE_PASSWORD:   ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD:          ${{ secrets.KEYCHAIN_PASSWORD }}
+          MAC_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE }}
+          MAC_CERTIFICATE_PASSWORD:   ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD:          ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
         run: |
           echo "$MAC_CERTIFICATE_P12_BASE64" | base64 --decode > cert.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
@@ -194,6 +197,7 @@ jobs:
         run: ./scripts/build-release.sh
 
       - name: Update cask sha256
+        if: inputs.create_release
         run: |
           NEW_VERSION="${{ steps.version.outputs.new }}"
           SHA256=$(awk "/SimulatorCamera-${NEW_VERSION}\.dmg/ { print \$1 }" \
@@ -212,6 +216,7 @@ jobs:
           path: dist/*
 
       - name: Commit version bump
+        if: inputs.create_release
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
