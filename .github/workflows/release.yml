@@ -121,6 +121,7 @@ jobs:
           echo "file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Update CHANGELOG.md
+        if: inputs.create_release
         run: |
           cat > /tmp/update_changelog.py << 'PYEOF'
           import sys, re
