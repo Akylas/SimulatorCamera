@@ -182,7 +182,7 @@ jobs:
       - name: Store notarytool credentials in keychain
         env:
           APPLE_ID:           ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID:      ${{ secrets.APPLE_TEAM_ID }}
         run: |
           xcrun notarytool store-credentials "SimulatorCameraNotary" \
