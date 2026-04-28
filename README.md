@@ -19,8 +19,6 @@ The iOS Simulator has never supported a real camera. `AVCaptureDevice` is empty.
 
 Frames show up in your app. Vision, VisionKit, Core ML, barcode detection, custom pipelines — the SDK is designed to drive them in the Simulator at 25–30 FPS over localhost, no device, no cables, no private APIs.
 
-> **Status:** v0.2.0 is a preview cut. A recorded demo and independent benchmarks will land with the first tagged release; for now, the protocol and shim are best-effort and we're actively looking for early testers.
-
 ---
 
 ## Why

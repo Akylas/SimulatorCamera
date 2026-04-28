@@ -226,7 +226,7 @@ jobs:
 
       - name: Create tag & GitHub release
         if: inputs.create_release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name:         ${{ steps.version.outputs.tag }}
           target_commitish: ${{ github.ref_name }}
