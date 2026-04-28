@@ -10,15 +10,17 @@
 #
 # Required env vars:
 #   VERSION                 e.g. 0.2.0  (else read from git tag)
-#   APPLE_DEVELOPER_ID      "Developer ID Application: Your Name (TEAMID)"
-#   APPLE_ID                Apple ID used for notarization
-#   APPLE_APP_PASSWORD      app-specific password for notarytool
-#   APPLE_TEAM_ID           10-char team ID
+#   APPLE_TEAM_ID           10-char team ID (used in exportOptions.plist)
+#
+# Notarization — choose one:
+#   KEYCHAIN_PROFILE        name of a stored notarytool keychain profile
+#                           (preferred; avoids passing credentials inline)
+#   APPLE_ID + APPLE_APP_PASSWORD + APPLE_TEAM_ID
+#                           inline credentials used when KEYCHAIN_PROFILE
+#                           is not set
 #
 # Optional env vars:
-#   KEYCHAIN_PROFILE        reuse a stored notarytool profile instead of
-#                           ID+password (takes precedence if set)
-#   SKIP_NOTARIZE=1         for local/dev builds
+#   SKIP_NOTARIZE=1         skip notarization entirely (local/dev builds)
 #
 set -euo pipefail
 
