@@ -74,6 +74,7 @@ cat > "$BUILD_DIR/exportOptions.plist" <<EOF
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>signingCertificate</key>      <string>Developer ID Application</string>
     <key>method</key>                  <string>developer-id</string>
     <key>teamID</key>                  <string>${APPLE_TEAM_ID:-}</string>
     <key>signingStyle</key>            <string>manual</string>
@@ -86,9 +87,12 @@ xcodebuild \
     -exportArchive \
     -archivePath "$ARCHIVE_PATH" \
     -exportPath "$EXPORT_PATH" \
-    -exportOptionsPlist "$BUILD_DIR/exportOptions.plist" | xcpretty || true
+    -exportOptionsPlist "$BUILD_DIR/exportOptions.plist" | xcpretty
 
 APP_BUNDLE="$EXPORT_PATH/$APP_NAME.app"
+
+codesign -dv --verbose=4 "$APP_BUNDLE"
+codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 
 if [[ -z "${SKIP_NOTARIZE:-}" ]]; then
     echo "▶︎ Notarizing (this can take several minutes)"
@@ -100,11 +104,15 @@ if [[ -z "${SKIP_NOTARIZE:-}" ]]; then
             --keychain-profile "$KEYCHAIN_PROFILE" \
             --wait
     else
-        xcrun notarytool submit "$ZIP_FOR_NOTARY" \
+        SUBMISSION_OUTPUT=$(xcrun notarytool submit "$ZIP_FOR_NOTARY" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
-            --wait
+            --wait --output-format json)
+        echo "$SUBMISSION_OUTPUT"
+        SUBMISSION_ID=$(echo "$SUBMISSION_OUTPUT" | jq -r '.id')
+
+        xcrun notarytool log "$SUBMISSION_ID"
     fi
 
     echo "▶︎ Stapling"
