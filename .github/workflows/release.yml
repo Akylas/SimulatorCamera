@@ -156,16 +156,6 @@ jobs:
             "$(date +%Y-%m-%d)" \
             "${{ steps.notes.outputs.file }}"
 
-      - name: Update cask version
-        if: inputs.create_release
-        run: |
-          VERSION="${{ steps.version.outputs.new }}"
-          ARM_SHA=$(awk "/arm64.dmg/ { print \$1 }" dist/SimulatorCamera-${VERSION}-arm64.sha256)
-          X86_SHA=$(awk "/x86_64.dmg/ { print \$1 }" dist/SimulatorCamera-${VERSION}-x86_64.sha256)
-
-          sed -i '' "s/ARM64_SHA256/${ARM_SHA}/" Casks/simulatorcamera.rb
-          sed -i '' "s/X86_64_SHA256/${X86_SHA}/" Casks/simulatorcamera.rb
-
       - name: Install xcpretty
         run: gem install xcpretty --no-document
 
@@ -223,18 +213,15 @@ jobs:
           mv "dist/SimulatorCamera-${VERSION}.sha256" \
             "dist/SimulatorCamera-${VERSION}-${ARCH}.sha256"
 
-      - name: Update cask sha256
+      - name: Update cask version
         if: inputs.create_release
         run: |
-          NEW_VERSION="${{ steps.version.outputs.new }}"
-          SHA256=$(awk "/SimulatorCamera-${NEW_VERSION}\.dmg/ { print \$1 }" \
-            "dist/SimulatorCamera-${NEW_VERSION}.sha256")
-          if [[ -z "$SHA256" ]]; then
-            echo "::error::Could not find sha256 for SimulatorCamera-${NEW_VERSION}.dmg" >&2
-            exit 1
-          fi
-          sed -i '' "s/  sha256 \"PENDING\"/  sha256 \"${SHA256}\"/" \
-            Casks/simulatorcamera.rb
+          VERSION="${{ steps.version.outputs.new }}"
+          ARM_SHA=$(awk "/arm64.dmg/ { print \$1 }" dist/SimulatorCamera-${VERSION}-arm64.sha256)
+          X86_SHA=$(awk "/x86_64.dmg/ { print \$1 }" dist/SimulatorCamera-${VERSION}-x86_64.sha256)
+
+          sed -i '' "s/ARM64_SHA256/${ARM_SHA}/" Casks/simulatorcamera.rb
+          sed -i '' "s/X86_64_SHA256/${X86_SHA}/" Casks/simulatorcamera.rb
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
