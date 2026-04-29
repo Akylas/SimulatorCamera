@@ -199,6 +199,8 @@ jobs:
       - name: Build, sign, notarize & package
         env:
           VERSION:          ${{ steps.version.outputs.new }}
+          APPLE_ID:    ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD:    ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID:    ${{ secrets.APPLE_TEAM_ID }}
           # KEYCHAIN_PROFILE: SimulatorCameraNotary
           ARCH:             ${{ matrix.arch }}
