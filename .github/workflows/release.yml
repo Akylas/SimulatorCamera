@@ -52,9 +52,7 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-
       - name: Compute new version
-        if: inputs.create_release
         id: version
         run: |
           # Latest semver tag, falling back to most recent version in CHANGELOG.md
