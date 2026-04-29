@@ -24,7 +24,7 @@
           "image-name" : "AppIcon.png",
           "name" : "AppIcon",
           "position" : {
-            "scale" : 1.05,
+            "scale" : 1.1,
             "translation-in-points" : [
               0,
               0
@@ -43,6 +43,9 @@
     }
   ],
   "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
     "squares" : "shared"
   }
 }
