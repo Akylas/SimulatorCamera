@@ -77,13 +77,52 @@ jobs:
             -S apple-tool:,apple:,codesign: \
             -s -k "$KEYCHAIN_PASSWORD" build.keychain
           rm cert.p12
+      
+
+      # - name: Store notarytool credentials in keychain
+      #   env:
+      #     APPLE_ID:           ${{ secrets.APPLE_ID }}
+      #     APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      #     APPLE_TEAM_ID:      ${{ secrets.APPLE_TEAM_ID }}
+      #   run: |
+      #     xcrun notarytool store-credentials "SimulatorCameraNotary" \
+      #         --apple-id  "$APPLE_ID" \
+      #         --password  "$APPLE_APP_PASSWORD" \
+      #         --team-id   "$APPLE_TEAM_ID"
+
+
+      - name: Compute new version
+        id: version
+        run: |
+          # Latest semver tag, falling back to most recent version in CHANGELOG.md
+          CURRENT=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 | sed 's/^v//')
+          if [[ -z "$CURRENT" ]]; then
+            CURRENT=$(grep -oE '\[([0-9]+\.[0-9]+\.[0-9]+)\]' CHANGELOG.md | head -1 | tr -d '[]')
+          fi
+          # Falls back to 0.0.0 when no tag or CHANGELOG entry exists (first release from scratch)
+          [[ -z "$CURRENT" ]] && CURRENT="0.0.0"
+
+          IFS='.' read -r MAJ MIN PAT <<< "$CURRENT"
+          case "${{ inputs.bump_type }}" in
+            major) MAJ=$((MAJ+1)); MIN=0; PAT=0 ;;
+            minor) MIN=$((MIN+1)); PAT=0 ;;
+            *)     PAT=$((PAT+1)) ;;
+          esac
+
+          NEW="${MAJ}.${MIN}.${PAT}"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW"         >> "$GITHUB_OUTPUT"
+          echo "tag=v$NEW"        >> "$GITHUB_OUTPUT"
 
       - name: Build & notarize
         env:
+          VERSION: ${{ steps.version.outputs.new }}
           ARCH: ${{ matrix.arch }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          DEVELOPER_ID_APP_CERT:    ${{ secrets.APPLE_DEVELOPER_ID_APP_CERT }}
+          # KEYCHAIN_PROFILE: SimulatorCameraNotary
         run: ./scripts/build-release.sh
 
       - name: Rename artifacts
@@ -159,22 +198,54 @@ jobs:
       # Generate changelog
       # ----------------------------
       - name: Generate release notes
+        if: inputs.create_release
         id: notes
         run: |
           CURRENT_TAG="v${{ steps.version.outputs.current }}"
-          NEW="v${{ steps.version.outputs.new }}"
-          FILE="$RUNNER_TEMP/notes.md"
+          NEW_VERSION="${{ steps.version.outputs.new }}"
+          NOTES_FILE="$RUNNER_TEMP/release_notes.md"
 
-          LOG=$(git log "${CURRENT_TAG}..HEAD" --pretty=format:"%s" || true)
+          if git rev-parse "$CURRENT_TAG" >/dev/null 2>&1; then
+            LOG=$(git log "${CURRENT_TAG}..HEAD" --format="%s" 2>/dev/null || true)
+          else
+            LOG=$(git log --format="%s" 2>/dev/null || true)
+          fi
+
+          BREAKING=$(printf '%s\n' "$LOG" | grep -E '^(feat|fix|refactor|perf)(\([^)]+\))?!:' || true)
+          FEATURES=$(printf '%s\n' "$LOG" | grep -E '^feat(\([^)]+\))?[!]?:' | grep -v '!:' || true)
+          FIXES=$(printf '%s\n' "$LOG" | grep -E '^fix(\([^)]+\))?[!]?:' | grep -v '!:' || true)
+          OTHERS=$(printf '%s\n' "$LOG" | grep -E '^(chore|docs|style|refactor|perf|test|ci)(\([^)]+\))?:' || true)
 
           {
-            echo "## Changes"
-            echo "$LOG" | sed 's/^/- /'
-            echo ""
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${CURRENT_TAG}...${NEW}"
-          } > "$FILE"
+            if [[ -n "$BREAKING" ]]; then
+              printf '### ⚠️ Breaking Changes\n\n'
+              printf '%s\n' "$BREAKING" | sed 's/^/- /'
+              printf '\n'
+            fi
+            if [[ -n "$FEATURES" ]]; then
+              printf '### ✨ Features\n\n'
+              printf '%s\n' "$FEATURES" | sed 's/^/- /'
+              printf '\n'
+            fi
+            if [[ -n "$FIXES" ]]; then
+              printf '### 🐛 Bug Fixes\n\n'
+              printf '%s\n' "$FIXES" | sed 's/^/- /'
+              printf '\n'
+            fi
+            if [[ -n "$OTHERS" ]]; then
+              printf '### 🔧 Other Changes\n\n'
+              printf '%s\n' "$OTHERS" | sed 's/^/- /'
+              printf '\n'
+            fi
+            if [[ -z "$BREAKING$FEATURES$FIXES$OTHERS" ]]; then
+              printf '<!-- no conventional commits found since %s -->\n\n' "$CURRENT_TAG"
+            fi
+            printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' \
+              "${{ github.repository }}" "$CURRENT_TAG" "v${NEW_VERSION}"
+          } > "$NOTES_FILE"
 
-          echo "file=$FILE" >> $GITHUB_OUTPUT
+          echo "file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+
 
       # ----------------------------
       # Compute SHAs (IMPORTANT FIX)
@@ -224,6 +295,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.ref_name }}
           name: "SimulatorCamera ${{ steps.version.outputs.tag }}"
           body_path: ${{ steps.notes.outputs.file }}
           files: |
