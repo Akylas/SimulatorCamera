@@ -190,9 +190,9 @@ struct ContentView: View {
                     HStack {
                         Label("\(String(format: "%.1f", state.streamer.currentFPS)) FPS",
                               systemImage: "speedometer")
-                        Spacer()
-                        Label("\(state.streamer.framesSent) frames sent",
-                              systemImage: "photo.stack")
+//                        Spacer()
+//                        Label("\(state.streamer.framesSent) frames sent",
+//                              systemImage: "photo.stack")
                         Spacer()
                         Label(state.streamer.isClientConnected ? "Client connected" : "Waiting for client…",
                               systemImage: state.streamer.isClientConnected ? "checkmark.circle.fill" : "circle.dashed")
