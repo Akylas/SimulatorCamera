@@ -202,6 +202,7 @@ jobs:
           APPLE_ID:    ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD:    ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID:    ${{ secrets.APPLE_TEAM_ID }}
+          DEVELOPER_ID_APP_CERT:    ${{ secrets.APPLE_DEVELOPER_ID_APP_CERT }}
           # KEYCHAIN_PROFILE: SimulatorCameraNotary
           ARCH:             ${{ matrix.arch }}
         run: ./scripts/build-release.sh

@@ -19,6 +19,8 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_BUNDLE_IDENTIFIER: com.simulatorcamera.server
         GENERATE_INFOPLIST_FILE: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: SimulatorCameraServer/SimulatorCameraServer.entitlements
         INFOPLIST_KEY_CFBundleDisplayName: SimulatorCameraServer
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         INFOPLIST_KEY_NSCameraUsageDescription: SimulatorCameraServer uses the Mac camera to stream frames to the iOS Simulator.

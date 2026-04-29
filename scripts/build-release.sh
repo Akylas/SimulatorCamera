@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -x
 #
 # build-release.sh — archive, codesign, notarize, staple, and package
 #                    the Mac companion app for a GitHub Release.
@@ -36,6 +37,21 @@ BUILD_DIR="$REPO_ROOT/build"
 DIST_DIR="$REPO_ROOT/dist"
 ARCHIVE_PATH="$BUILD_DIR/$APP_NAME.xcarchive"
 EXPORT_PATH="$BUILD_DIR/export"
+APP_BUNDLE="$EXPORT_PATH/$APP_NAME.app"
+ENTITLEMENTS_PATH="apps/MacServer/SimulatorCameraServer/SimulatorCameraServer.entitlements"
+
+sign() {
+    local path="$1"
+    echo "▶︎ Signing: $path"
+
+    codesign --force --options runtime \
+        --sign "$DEVELOPER_ID_APP_CERT" \
+        --timestamp \
+        "$path"
+}
+verify() {
+    codesign --verify --deep --strict --verbose=2 "$1"
+}
 
 if ! command -v xcodegen >/dev/null 2>&1; then
     echo "✗ xcodegen is required to generate $PROJECT from $PROJECT_SPEC"
@@ -66,9 +82,13 @@ xcodebuild \
     ONLY_ACTIVE_ARCH=NO \
     MARKETING_VERSION="$VERSION" \
     CURRENT_PROJECT_VERSION="$VERSION" \
+    CODE_SIGN_STYLE=Manual \
+    CODE_SIGN_IDENTITY="$DEVELOPER_ID_APP_CERT" \
+    DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
     archive | xcpretty || true
 
 echo "▶︎ Exporting .app with Developer ID signing"
+
 cat > "$BUILD_DIR/exportOptions.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -89,10 +109,39 @@ xcodebuild \
     -exportPath "$EXPORT_PATH" \
     -exportOptionsPlist "$BUILD_DIR/exportOptions.plist" | xcpretty
 
-APP_BUNDLE="$EXPORT_PATH/$APP_NAME.app"
+echo "▶︎ Re-signing app bundle WITHOUT --deep (deterministic)"
+APP_PATH="$APP_BUNDLE"
+# 1. Sign embedded frameworks (if any)
+if [ -d "$APP_PATH/Contents/Frameworks" ]; then
+    find "$APP_PATH/Contents/Frameworks" -type f -name "*" | while read -r f; do
+        file "$f" | grep -q "Mach-O" && sign "$f" || true
+    done
 
-codesign -dv --verbose=4 "$APP_BUNDLE"
-codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+    find "$APP_PATH/Contents/Frameworks" -type d -name "*.framework" | while read -r fw; do
+        sign "$fw"
+    done
+fi
+
+# 2. Sign helper tools / XPC services (if any)
+if [ -d "$APP_PATH/Contents/XPCServices" ]; then
+    find "$APP_PATH/Contents/XPCServices" -type d -name "*.xpc" | while read -r xpc; do
+        sign "$xpc"
+    done
+fi
+
+# 3. Sign main executable
+sign "$APP_PATH/Contents/MacOS/$APP_NAME"
+
+# 4. Finally sign the .app bundle WITH entitlements
+echo "▶︎ Signing app bundle (final step)"
+codesign --force --options runtime \
+    --entitlements "$ENTITLEMENTS_PATH" \
+    --sign "$DEVELOPER_ID_APP_CERT" \
+    --timestamp \
+    "$APP_PATH"
+
+verify "$APP_PATH"
+spctl --assess --type execute --verbose "$APP_PATH"
 
 if [[ -z "${SKIP_NOTARIZE:-}" ]]; then
     echo "▶︎ Notarizing (this can take several minutes)"
@@ -112,7 +161,9 @@ if [[ -z "${SKIP_NOTARIZE:-}" ]]; then
         echo "$SUBMISSION_OUTPUT"
         SUBMISSION_ID=$(echo "$SUBMISSION_OUTPUT" | jq -r '.id')
 
-        xcrun notarytool log "$SUBMISSION_ID"
+        xcrun notarytool log --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" "$SUBMISSION_ID"
     fi
 
     echo "▶︎ Stapling"
