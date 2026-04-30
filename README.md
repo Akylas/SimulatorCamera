@@ -72,7 +72,8 @@ Or in Xcode: **File → Add Package Dependencies…** → paste the repo URL.
 **Homebrew (recommended):**
 
 ```bash
-brew install --cask dautovri/tap/simulatorcamera
+brew tap akylas/simulatorcamera https://github.com/Akylas/SimulatorCamera
+brew install simulatorcamera
 open -a SimulatorCameraServer
 ```
 
