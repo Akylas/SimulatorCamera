@@ -53,7 +53,7 @@ This project deletes that `TODO`. Same API shape in the Simulator and on device.
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/dautovri/SimulatorCamera.git", from: "0.2.0"),
+    .package(url: "https://github.com/Akylas/SimulatorCamera.git", from: "1.0.0"),
 ],
 targets: [
     .target(
