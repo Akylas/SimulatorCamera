@@ -1,0 +1,1229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SimulatorCamera — Real camera feeds in the iOS Simulator</title>
+  <meta name="description" content="Plug a real camera, a video file, or your screen into the iOS Simulator. Finally." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0a0a0f;
+      --bg2:       #111118;
+      --bg3:       #1a1a26;
+      --border:    rgba(255,255,255,.07);
+      --text:      #e8e8f0;
+      --muted:     #7a7a9a;
+      --accent:    #7c6af7;
+      --accent2:   #a78bfa;
+      --green:     #34d399;
+      --orange:    #fb923c;
+      --blue:      #60a5fa;
+      --pink:      #f472b6;
+      --radius:    14px;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      font-size: 16px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ─── NAV ─── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 clamp(1.5rem, 5vw, 5rem);
+      height: 64px;
+      background: rgba(10,10,15,.8);
+      backdrop-filter: blur(18px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+      font-weight: 700;
+      font-size: 1.05rem;
+      color: var(--text);
+      text-decoration: none;
+    }
+
+    .nav-logo svg { width: 28px; height: 28px; flex-shrink: 0; }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: .9rem;
+      font-weight: 500;
+      transition: color .2s;
+    }
+
+    .nav-links a:hover { color: var(--text); }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: .45rem;
+      padding: .55rem 1.25rem;
+      border-radius: 8px;
+      font-size: .875rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all .2s;
+      cursor: pointer;
+      border: none;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 0 20px rgba(124,106,247,.35);
+    }
+
+    .btn-primary:hover {
+      background: var(--accent2);
+      box-shadow: 0 0 30px rgba(167,139,250,.45);
+      transform: translateY(-1px);
+    }
+
+    .btn-outline {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-outline:hover {
+      border-color: var(--accent);
+      color: var(--accent2);
+      background: rgba(124,106,247,.08);
+    }
+
+    /* ─── HERO ─── */
+    .hero {
+      position: relative;
+      overflow: hidden;
+      text-align: center;
+      padding: clamp(5rem, 12vw, 9rem) clamp(1.5rem, 5vw, 4rem) clamp(4rem, 8vw, 7rem);
+    }
+
+    /* animated grid background */
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(124,106,247,.08) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(124,106,247,.08) 1px, transparent 1px);
+      background-size: 60px 60px;
+      mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black 40%, transparent 100%);
+    }
+
+    /* glowing orb */
+    .hero::after {
+      content: '';
+      position: absolute;
+      top: -180px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 800px;
+      height: 500px;
+      background: radial-gradient(ellipse, rgba(124,106,247,.25) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero > * { position: relative; z-index: 1; }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+      padding: .3rem .9rem;
+      border-radius: 999px;
+      border: 1px solid rgba(124,106,247,.35);
+      background: rgba(124,106,247,.1);
+      color: var(--accent2);
+      font-size: .8rem;
+      font-weight: 600;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+      margin-bottom: 1.5rem;
+    }
+
+    h1 {
+      font-size: clamp(2.6rem, 6vw, 5rem);
+      font-weight: 900;
+      line-height: 1.08;
+      letter-spacing: -.03em;
+      margin-bottom: 1.25rem;
+    }
+
+    h1 .gradient {
+      background: linear-gradient(135deg, var(--accent2) 0%, var(--blue) 50%, var(--green) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-sub {
+      max-width: 600px;
+      margin: 0 auto 2.5rem;
+      font-size: clamp(1rem, 2vw, 1.2rem);
+      color: var(--muted);
+      font-weight: 400;
+      line-height: 1.7;
+    }
+
+    .hero-cta {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .hero-badges {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: .6rem;
+      flex-wrap: wrap;
+      margin-top: 3rem;
+    }
+
+    .hero-badges img { height: 22px; }
+
+    /* ─── TERMINAL DEMO ─── */
+    .demo-terminal {
+      max-width: 680px;
+      margin: 3.5rem auto 0;
+      border-radius: var(--radius);
+      overflow: hidden;
+      border: 1px solid var(--border);
+      box-shadow: 0 32px 80px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.03);
+    }
+
+    .terminal-bar {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      padding: .75rem 1rem;
+      background: var(--bg3);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .dot { width: 12px; height: 12px; border-radius: 50%; }
+    .dot-red    { background: #ff5f57; }
+    .dot-yellow { background: #ffbd2e; }
+    .dot-green  { background: #28c840; }
+
+    .terminal-title {
+      flex: 1;
+      text-align: center;
+      font-size: .78rem;
+      color: var(--muted);
+      font-family: var(--font-mono);
+    }
+
+    .terminal-body {
+      background: #0d0d14;
+      padding: 1.25rem 1.5rem;
+      font-family: var(--font-mono);
+      font-size: .88rem;
+      line-height: 1.9;
+    }
+
+    .term-prompt { color: var(--green); }
+    .term-cmd    { color: var(--text); }
+    .term-out    { color: var(--muted); }
+    .term-ok     { color: var(--green); }
+    .term-url    { color: var(--blue); }
+
+    /* ─── SECTIONS ─── */
+    section {
+      padding: clamp(4rem, 8vw, 6rem) clamp(1.5rem, 5vw, 5rem);
+    }
+
+    .section-label {
+      display: inline-block;
+      font-size: .75rem;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--accent2);
+      margin-bottom: .75rem;
+    }
+
+    h2 {
+      font-size: clamp(1.8rem, 4vw, 2.8rem);
+      font-weight: 800;
+      letter-spacing: -.025em;
+      line-height: 1.15;
+      margin-bottom: 1rem;
+    }
+
+    .section-sub {
+      color: var(--muted);
+      font-size: 1.05rem;
+      max-width: 560px;
+      line-height: 1.7;
+      margin-bottom: 3rem;
+    }
+
+    /* ─── FEATURES ─── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1px;
+      background: var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    .feature-card {
+      background: var(--bg2);
+      padding: 2rem 1.75rem;
+      transition: background .2s;
+    }
+
+    .feature-card:hover { background: var(--bg3); }
+
+    .feature-icon {
+      font-size: 1.8rem;
+      margin-bottom: 1rem;
+      line-height: 1;
+    }
+
+    .feature-title {
+      font-weight: 700;
+      font-size: 1rem;
+      margin-bottom: .45rem;
+    }
+
+    .feature-desc {
+      font-size: .9rem;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    /* ─── CODE BLOCKS ─── */
+    .code-wrap {
+      position: relative;
+      border-radius: var(--radius);
+      overflow: hidden;
+      border: 1px solid var(--border);
+      margin: 1.25rem 0;
+    }
+
+    .code-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: .6rem 1rem;
+      background: var(--bg3);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .code-lang {
+      font-size: .75rem;
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+    }
+
+    .copy-btn {
+      display: flex;
+      align-items: center;
+      gap: .35rem;
+      padding: .3rem .7rem;
+      border-radius: 6px;
+      background: rgba(255,255,255,.06);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: .75rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .15s;
+      font-family: inherit;
+    }
+
+    .copy-btn:hover {
+      background: rgba(124,106,247,.15);
+      border-color: rgba(124,106,247,.4);
+      color: var(--accent2);
+    }
+
+    .copy-btn.copied {
+      color: var(--green);
+      border-color: rgba(52,211,153,.4);
+      background: rgba(52,211,153,.08);
+    }
+
+    pre {
+      background: #0d0d14;
+      padding: 1.25rem 1.5rem;
+      overflow-x: auto;
+      margin: 0;
+    }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: .87rem;
+      line-height: 1.8;
+      tab-size: 2;
+    }
+
+    /* Swift syntax tokens */
+    .kw   { color: #c792ea; }   /* keywords */
+    .type { color: #82aaff; }   /* types */
+    .str  { color: #c3e88d; }   /* strings */
+    .num  { color: #f78c6c; }   /* numbers */
+    .cm   { color: #546e7a; font-style: italic; }  /* comments */
+    .fn   { color: #82aaff; }   /* functions */
+    .prop { color: #f07178; }   /* properties */
+    .ann  { color: var(--orange); }   /* annotations */
+
+    /* Bash tokens */
+    .bash-cmd   { color: var(--green); }
+    .bash-flag  { color: var(--blue); }
+    .bash-str   { color: #c3e88d; }
+    .bash-cmt   { color: #546e7a; font-style: italic; }
+
+    /* ─── INSTALLATION TABS ─── */
+    .install-section {
+      background: var(--bg2);
+      border-radius: 20px;
+      padding: clamp(2rem, 5vw, 3.5rem);
+      border: 1px solid var(--border);
+    }
+
+    .tabs {
+      display: flex;
+      gap: .5rem;
+      margin-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: .75rem;
+    }
+
+    .tab {
+      padding: .5rem 1.1rem;
+      border-radius: 8px;
+      font-size: .875rem;
+      font-weight: 600;
+      cursor: pointer;
+      color: var(--muted);
+      background: transparent;
+      border: 1px solid transparent;
+      transition: all .15s;
+    }
+
+    .tab.active, .tab:hover {
+      color: var(--accent2);
+      background: rgba(124,106,247,.1);
+      border-color: rgba(124,106,247,.3);
+    }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ─── USAGE STEPS ─── */
+    .steps {
+      display: flex;
+      flex-direction: column;
+      gap: 2.5rem;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 40px 1fr;
+      gap: 1.25rem;
+      align-items: start;
+    }
+
+    .step-num {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: rgba(124,106,247,.15);
+      border: 1px solid rgba(124,106,247,.3);
+      color: var(--accent2);
+      font-weight: 800;
+      font-size: .9rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-top: .1rem;
+    }
+
+    .step-content h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin-bottom: .35rem;
+    }
+
+    .step-content p {
+      color: var(--muted);
+      font-size: .92rem;
+      line-height: 1.65;
+      margin-bottom: .75rem;
+    }
+
+    /* ─── PROTOCOL TABLE ─── */
+    .proto-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--font-mono);
+      font-size: .82rem;
+      border-radius: var(--radius);
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    .proto-table th {
+      background: var(--bg3);
+      color: var(--accent2);
+      font-size: .72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      padding: .75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .proto-table td {
+      padding: .7rem 1rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      vertical-align: top;
+    }
+
+    .proto-table tr:last-child td { border-bottom: none; }
+
+    .proto-table tr:hover td { background: rgba(255,255,255,.02); }
+
+    .proto-table .field  { color: var(--green); font-weight: 600; }
+    .proto-table .size   { color: var(--orange); }
+    .proto-table .note   { color: var(--muted); font-style: italic; }
+
+    /* ─── COMPARE ─── */
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 640px) { .compare-grid { grid-template-columns: 1fr; } }
+
+    .compare-card {
+      border-radius: var(--radius);
+      padding: 1.75rem;
+      border: 1px solid var(--border);
+    }
+
+    .compare-card.before { background: rgba(248,113,113,.04); border-color: rgba(248,113,113,.15); }
+    .compare-card.after  { background: rgba(52,211,153,.04);  border-color: rgba(52,211,153,.15); }
+
+    .compare-label {
+      font-size: .75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      margin-bottom: 1rem;
+    }
+
+    .compare-card.before .compare-label { color: #f87171; }
+    .compare-card.after  .compare-label { color: var(--green); }
+
+    /* ─── FOOTER ─── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2.5rem clamp(1.5rem, 5vw, 5rem);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .footer-left {
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+      font-size: .875rem;
+      color: var(--muted);
+    }
+
+    .footer-right {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+    }
+
+    .footer-right a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: .875rem;
+      transition: color .15s;
+    }
+
+    .footer-right a:hover { color: var(--text); }
+
+    /* ─── SPONSOR STRIP ─── */
+    .sponsor-strip {
+      background: linear-gradient(135deg, rgba(124,106,247,.12) 0%, rgba(96,165,250,.08) 100%);
+      border: 1px solid rgba(124,106,247,.2);
+      border-radius: 16px;
+      padding: 2.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+    }
+
+    .sponsor-text h3 { font-size: 1.2rem; font-weight: 700; margin-bottom: .35rem; }
+    .sponsor-text p  { color: var(--muted); font-size: .92rem; }
+
+    /* ─── SCROLLBAR ─── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 3px; }
+
+    /* ─── UTIL ─── */
+    .container { max-width: 1100px; margin: 0 auto; }
+    .text-center { text-align: center; }
+    .mt-sm { margin-top: .75rem; }
+    .mt-md { margin-top: 1.5rem; }
+    .mt-lg { margin-top: 2.5rem; }
+
+    /* ─── RESPONSIVE ─── */
+    @media (max-width: 768px) {
+      .nav-links { display: none; }
+      .step { grid-template-columns: 32px 1fr; gap: .75rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ─── NAV ─── -->
+<nav>
+  <a href="#" class="nav-logo">
+    <svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="28" height="28" rx="7" fill="#7c6af7"/>
+      <circle cx="14" cy="14" r="6" stroke="white" stroke-width="2"/>
+      <circle cx="14" cy="14" r="2.5" fill="white"/>
+      <rect x="4" y="12" width="3" height="4" rx="1" fill="white" opacity=".7"/>
+      <rect x="21" y="12" width="3" height="4" rx="1" fill="white" opacity=".7"/>
+    </svg>
+    SimulatorCamera
+  </a>
+  <ul class="nav-links">
+    <li><a href="#features">Features</a></li>
+    <li><a href="#install">Install</a></li>
+    <li><a href="#usage">Usage</a></li>
+    <li><a href="#protocol">Protocol</a></li>
+    <li><a href="https://github.com/Akylas/SimulatorCamera" target="_blank">GitHub ↗</a></li>
+  </ul>
+  <a href="https://github.com/Akylas/SimulatorCamera/releases" class="btn btn-primary" target="_blank">
+    Download v0.2.0
+  </a>
+</nav>
+
+<!-- ─── HERO ─── -->
+<section class="hero">
+  <div class="hero-badge">
+    <span>🎉</span> v0.2 — AVCaptureSession drop-in shim
+  </div>
+  <h1>
+    A real camera<br/>
+    <span class="gradient">in the iOS Simulator.</span><br/>
+    Finally.
+  </h1>
+  <p class="hero-sub">
+    Stream your Mac webcam, a video file, or a test pattern directly into any Simulator app.
+    Same <code style="color:var(--accent2);font-family:var(--font-mono)">AVCaptureSession</code> API you already know — no private APIs, no device needed.
+  </p>
+  <div class="hero-cta">
+    <a href="#install" class="btn btn-primary">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zm3.5 8.7l-3 3a.7.7 0 01-1 0l-3-3a.7.7 0 011-1L7 9.3V4a1 1 0 012 0v5.3l1.5-1.6a.7.7 0 011 1z"/></svg>
+      Get Started
+    </a>
+    <a href="https://github.com/Akylas/SimulatorCamera" class="btn btn-outline" target="_blank">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      View on GitHub
+    </a>
+  </div>
+  <div class="hero-badges">
+    <img src="https://img.shields.io/badge/Swift-5.9%2B-orange.svg" alt="Swift 5.9+" />
+    <img src="https://img.shields.io/badge/platforms-iOS%2016%20%7C%20macOS%2013-blue.svg" alt="Platforms" />
+    <img src="https://img.shields.io/badge/SwiftPM-compatible-brightgreen.svg" alt="SwiftPM" />
+    <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT" />
+    <img src="https://img.shields.io/badge/No%20private%20APIs-✓-34d399.svg" alt="No private APIs" />
+  </div>
+
+  <!-- Terminal demo -->
+  <div class="demo-terminal" style="text-align:left;">
+    <div class="terminal-bar">
+      <span class="dot dot-red"></span>
+      <span class="dot dot-yellow"></span>
+      <span class="dot dot-green"></span>
+      <span class="terminal-title">Terminal — zsh</span>
+    </div>
+    <div class="terminal-body">
+      <div><span class="term-prompt">$</span> <span class="term-cmd">brew tap akylas/simulatorcamera https://github.com/Akylas/SimulatorCamera</span></div>
+      <div><span class="term-out">=&gt; Tapping akylas/simulatorcamera...</span></div>
+      <div><span class="term-prompt">$</span> <span class="term-cmd">brew install simulatorcamera</span></div>
+      <div><span class="term-ok">✓  SimulatorCameraServer installed</span></div>
+      <div><span class="term-prompt">$</span> <span class="term-cmd">open -a SimulatorCameraServer</span></div>
+      <div><span class="term-out"># 🎥 Pick a source — webcam, video file, or test pattern</span></div>
+      <div><span class="term-out"># 🟢 Streaming on <span class="term-url">localhost:9876</span> — frames land in your Simulator</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── FEATURES ─── -->
+<section id="features">
+  <div class="container">
+    <div class="text-center">
+      <span class="section-label">Features</span>
+      <h2>Everything you need. Nothing you don't.</h2>
+      <p class="section-sub" style="margin:0 auto 3rem;">
+        A lean two-piece tool: a macOS companion app that streams frames,
+        and an iOS Swift Package that receives them — zero overhead on real devices.
+      </p>
+    </div>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">🎥</div>
+        <div class="feature-title">30 FPS Live Stream</div>
+        <div class="feature-desc">TCP over localhost — no Bonjour, no Wi-Fi flakiness. Consistent 25–30 FPS via <code style="font-family:var(--font-mono);color:var(--accent2)">Network.framework</code>.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🧩</div>
+        <div class="feature-title">Drop-in API</div>
+        <div class="feature-desc">Full <code style="font-family:var(--font-mono);color:var(--accent2)">AVCaptureSession</code> shim — prefix existing types with <code style="font-family:var(--font-mono);color:var(--accent2)">Simulator</code> and your code just works.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔌</div>
+        <div class="feature-title">Multiple Sources</div>
+        <div class="feature-desc">Mac webcam, video file, or built-in test pattern. Screen-region capture on the roadmap.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📵</div>
+        <div class="feature-title">Zero Device Overhead</div>
+        <div class="feature-desc">Entire client is wrapped in <code style="font-family:var(--font-mono);color:var(--accent2)">#if targetEnvironment(simulator)</code> — compiles to nothing on a real iPhone.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🛡</div>
+        <div class="feature-title">No Private APIs</div>
+        <div class="feature-desc">Built on <code style="font-family:var(--font-mono);color:var(--accent2)">Network.framework</code>, <code style="font-family:var(--font-mono);color:var(--accent2)">CoreVideo</code>, and <code style="font-family:var(--font-mono);color:var(--accent2)">ImageIO</code>. App Store safe.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🧪</div>
+        <div class="feature-title">Vision &amp; Core ML Ready</div>
+        <div class="feature-desc">Frames arrive as <code style="font-family:var(--font-mono);color:var(--accent2)">CVPixelBuffer</code> and <code style="font-family:var(--font-mono);color:var(--accent2)">CMSampleBuffer</code> — feed them straight to VisionKit, CreateML, or your own pipeline.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📦</div>
+        <div class="feature-title">One-Line Install</div>
+        <div class="feature-desc">Swift Package Manager for the iOS SDK. Homebrew cask for the Mac app. That's it.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔐</div>
+        <div class="feature-title">Localhost Only</div>
+        <div class="feature-desc">Connections are bound to <code style="font-family:var(--font-mono);color:var(--accent2)">127.0.0.1</code> by default — your camera feed never leaves your machine.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── BEFORE / AFTER ─── -->
+<section style="padding-top: 0;">
+  <div class="container">
+    <div class="text-center" style="margin-bottom: 2.5rem;">
+      <span class="section-label">Why SimulatorCamera?</span>
+      <h2>Delete the <code style="font-size:inherit;font-family:var(--font-mono);color:#f87171">#if simulator TODO</code></h2>
+    </div>
+    <div class="compare-grid">
+      <div class="compare-card before">
+        <div class="compare-label">❌ Before</div>
+        <div class="code-wrap" style="margin:0;">
+          <div class="code-header">
+            <span class="code-lang">Swift</span>
+          </div>
+          <pre><code><span class="cm">// Every camera app ever written</span>
+<span class="kw">#if</span> targetEnvironment(simulator)
+<span class="cm">// TODO: fake it somehow 🤷</span>
+<span class="kw">#else</span>
+<span class="kw">let</span> session = <span class="type">AVCaptureSession</span>()
+<span class="cm">// real code here</span>
+<span class="kw">#endif</span></code></pre>
+        </div>
+      </div>
+      <div class="compare-card after">
+        <div class="compare-label">✅ After</div>
+        <div class="code-wrap" style="margin:0;">
+          <div class="code-header">
+            <span class="code-lang">Swift</span>
+          </div>
+          <pre><code><span class="kw">import</span> <span class="type">SimulatorCameraClient</span>
+
+<span class="cm">// Same code path everywhere</span>
+<span class="kw">let</span> output = <span class="type">SimulatorCameraOutput</span>()
+output.<span class="fn">setSampleBufferDelegate</span>(
+    self, queue: myQueue
+)
+<span class="type">SimulatorCamera</span>.<span class="fn">start</span>()</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── INSTALLATION ─── -->
+<section id="install">
+  <div class="container">
+    <span class="section-label">Installation</span>
+    <h2>Up and running in two steps.</h2>
+    <p class="section-sub">Install the iOS SDK in your app, then grab the Mac companion to stream frames.</p>
+
+    <div class="install-section">
+      <!-- iOS SDK -->
+      <h3 style="font-size:1.1rem;font-weight:700;margin-bottom:1.25rem;display:flex;align-items:center;gap:.5rem;">
+        <span style="font-size:1.3rem;">📱</span> Step 1 — iOS SDK (Swift Package Manager)
+      </h3>
+
+      <p style="color:var(--muted);font-size:.92rem;margin-bottom:.75rem;">Add to your <code style="font-family:var(--font-mono);color:var(--accent2)">Package.swift</code>:</p>
+
+      <div class="code-wrap">
+        <div class="code-header">
+          <span class="code-lang">Swift • Package.swift</span>
+          <button class="copy-btn" onclick="copyCode(this)">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M4 4v8h8V4H4zm-1-1h10v10H3V3zM1 1h10v1H2v9H1V1z"/></svg>
+            Copy
+          </button>
+        </div>
+        <pre><code><span class="prop">dependencies</span>: [
+    .<span class="fn">package</span>(
+        url: <span class="str">"https://github.com/Akylas/SimulatorCamera.git"</span>,
+        from: <span class="str">"1.0.0"</span>
+    ),
+],
+<span class="prop">targets</span>: [
+    .<span class="fn">target</span>(
+        name: <span class="str">"MyApp"</span>,
+        <span class="prop">dependencies</span>: [
+            .<span class="fn">product</span>(
+                name: <span class="str">"SimulatorCameraClient"</span>,
+                package: <span class="str">"SimulatorCamera"</span>
+            ),
+        ]
+    ),
+]</code></pre>
+      </div>
+
+      <p style="color:var(--muted);font-size:.88rem;">
+        Or in Xcode: <strong style="color:var(--text)">File → Add Package Dependencies…</strong> → paste
+        <code style="font-family:var(--font-mono);color:var(--accent2)">https://github.com/Akylas/SimulatorCamera.git</code>
+      </p>
+
+      <hr style="border:none;border-top:1px solid var(--border);margin:2rem 0;" />
+
+      <!-- macOS app -->
+      <h3 style="font-size:1.1rem;font-weight:700;margin-bottom:1.25rem;display:flex;align-items:center;gap:.5rem;">
+        <span style="font-size:1.3rem;">🖥</span> Step 2 — macOS Companion App
+      </h3>
+
+      <div class="tabs" id="install-tabs">
+        <button class="tab active" onclick="switchTab(event,'brew')">Homebrew</button>
+        <button class="tab" onclick="switchTab(event,'dmg')">DMG Download</button>
+        <button class="tab" onclick="switchTab(event,'src')">Build from source</button>
+      </div>
+
+      <div id="tab-brew" class="tab-panel active">
+        <div class="code-wrap">
+          <div class="code-header">
+            <span class="code-lang">Bash</span>
+            <button class="copy-btn" onclick="copyCode(this)">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M4 4v8h8V4H4zm-1-1h10v10H3V3zM1 1h10v1H2v9H1V1z"/></svg>
+              Copy
+            </button>
+          </div>
+          <pre><code><span class="bash-cmt"># Tap the formula</span>
+<span class="bash-cmd">brew tap</span> akylas/simulatorcamera \
+    https://github.com/Akylas/SimulatorCamera
+
+<span class="bash-cmt"># Install &amp; launch</span>
+<span class="bash-cmd">brew install</span> simulatorcamera
+<span class="bash-cmd">open</span> <span class="bash-flag">-a</span> SimulatorCameraServer</code></pre>
+        </div>
+      </div>
+
+      <div id="tab-dmg" class="tab-panel">
+        <p style="color:var(--muted);font-size:.92rem;margin-bottom:1rem;">
+          Grab the signed &amp; notarized <code style="font-family:var(--font-mono);color:var(--accent2)">.dmg</code> straight from Releases — no Homebrew required.
+        </p>
+        <a href="https://github.com/Akylas/SimulatorCamera/releases" class="btn btn-primary" target="_blank" style="margin-bottom:.75rem;">
+          ⬇️ &nbsp;Download Latest Release
+        </a>
+        <p style="color:var(--muted);font-size:.8rem;margin-top:.75rem;">
+          Mount the DMG, drag <strong>SimulatorCameraServer.app</strong> to <code style="font-family:var(--font-mono)">Applications/</code>, and open it.
+        </p>
+      </div>
+
+      <div id="tab-src" class="tab-panel">
+        <div class="code-wrap">
+          <div class="code-header">
+            <span class="code-lang">Bash</span>
+            <button class="copy-btn" onclick="copyCode(this)">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M4 4v8h8V4H4zm-1-1h10v10H3V3zM1 1h10v1H2v9H1V1z"/></svg>
+              Copy
+            </button>
+          </div>
+          <pre><code><span class="bash-cmd">git clone</span> https://github.com/Akylas/SimulatorCamera.git
+<span class="bash-cmd">cd</span> SimulatorCamera
+<span class="bash-cmd">brew install</span> xcodegen
+<span class="bash-cmd">xcodegen generate</span> <span class="bash-flag">--spec</span> apps/MacServer/project.yml
+<span class="bash-cmd">open</span> apps/MacServer/SimulatorCameraServer.xcodeproj</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── USAGE ─── -->
+<section id="usage" style="background:var(--bg2);border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
+  <div class="container">
+    <span class="section-label">Usage</span>
+    <h2>Three ways to integrate.</h2>
+    <p class="section-sub">Pick the approach that matches how much of your existing code you want to keep.</p>
+
+    <div class="steps">
+
+      <!-- Step 1 -->
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-content">
+          <h3>Launch the Mac server</h3>
+          <p>Open <strong>SimulatorCameraServer.app</strong>, pick a source (webcam, video file, or test pattern), and click <strong>Start</strong>. The server streams frames on <code style="font-family:var(--font-mono);color:var(--accent2)">localhost:9876</code>.</p>
+        </div>
+      </div>
+
+      <!-- Step 2 — minimal delegate -->
+      <div class="step">
+        <div class="step-num">2a</div>
+        <div class="step-content">
+          <h3>Minimal — <code style="font-family:var(--font-mono);font-size:.9rem;">FrameSource</code> delegate</h3>
+          <p>The smallest integration: a single delegate callback gives you a <code style="font-family:var(--font-mono);color:var(--accent2)">CVPixelBuffer</code> per frame.</p>
+          <div class="code-wrap">
+            <div class="code-header">
+              <span class="code-lang">Swift</span>
+              <button class="copy-btn" onclick="copyCode(this)">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M4 4v8h8V4H4zm-1-1h10v10H3V3zM1 1h10v1H2v9H1V1z"/></svg>
+                Copy
+              </button>
+            </div>
+            <pre><code><span class="kw">import</span> <span class="type">SimulatorCameraClient</span>
+
+<span class="kw">final class</span> <span class="type">CameraController</span>: <span class="type">NSObject</span>, <span class="type">FrameSourceDelegate</span> {
+    <span class="kw">private let</span> source: <span class="type">FrameSource</span>
+
+    <span class="kw">override init</span>() {
+        <span class="kw">#if</span> targetEnvironment(simulator)
+        source = <span class="type">SimulatorCameraSession</span>(
+            host: <span class="str">"127.0.0.1"</span>, port: <span class="num">9876</span>
+        )
+        <span class="kw">#else</span>
+        source = <span class="type">AVCaptureFrameSource</span>() <span class="cm">// your existing wrapper</span>
+        <span class="kw">#endif</span>
+        <span class="kw">super</span>.<span class="fn">init</span>()
+        source.<span class="prop">delegate</span> = <span class="kw">self</span>
+        source.<span class="fn">start</span>()
+    }
+
+    <span class="kw">func</span> <span class="fn">frameSource</span>(_ source: <span class="type">FrameSource</span>,
+                     didOutput pixelBuffer: <span class="type">CVPixelBuffer</span>,
+                     at time: <span class="type">CMTime</span>) {
+        <span class="cm">// Feed to Vision, Core ML, preview layer…</span>
+    }
+}</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2b — full AVCapture shim -->
+      <div class="step">
+        <div class="step-num">2b</div>
+        <div class="step-content">
+          <h3>Full <code style="font-family:var(--font-mono);font-size:.9rem;">AVCaptureSession</code> drop-in</h3>
+          <p>Prefix existing AVFoundation types with <code style="font-family:var(--font-mono);color:var(--accent2)">Simulator</code>. Your setup code ports with a find-and-replace.</p>
+          <div class="code-wrap">
+            <div class="code-header">
+              <span class="code-lang">Swift</span>
+              <button class="copy-btn" onclick="copyCode(this)">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M4 4v8h8V4H4zm-1-1h10v10H3V3zM1 1h10v1H2v9H1V1z"/></svg>
+                Copy
+              </button>
+            </div>
+            <pre><code><span class="kw">import</span> <span class="type">SimulatorCameraClient</span>
+
+<span class="type">SimulatorCamera</span>.<span class="fn">configure</span>(host: <span class="str">"127.0.0.1"</span>, port: <span class="num">9876</span>)
+
+<span class="kw">let</span> session = <span class="type">SimulatorCaptureSession</span>()
+session.<span class="prop">sessionPreset</span> = .<span class="prop">hd1280x720</span>
+
+<span class="kw">guard let</span> device = <span class="type">SimulatorCaptureDevice</span>.<span class="fn">default</span>(for: .<span class="prop">video</span>)
+<span class="kw">else</span> { <span class="kw">return</span> }
+
+<span class="kw">let</span> input = <span class="kw">try</span> <span class="type">SimulatorCaptureDeviceInput</span>(device: device)
+session.<span class="fn">addInput</span>(input)
+
+<span class="kw">let</span> output = <span class="type">SimulatorCameraOutput</span>()
+output.<span class="fn">setSampleBufferDelegate</span>(self, queue: frameQueue)
+session.<span class="fn">addOutput</span>(output)
+
+session.<span class="fn">startRunning</span>()  <span class="cm">// kicks off the network session</span></code></pre>
+          </div>
+          <p>Your existing <code style="font-family:var(--font-mono);color:var(--accent2)">captureOutput(_:didOutput:from:)</code> fires with a valid <code style="font-family:var(--font-mono);color:var(--accent2)">CMSampleBuffer</code> — same code path as the real device.</p>
+        </div>
+      </div>
+
+      <!-- Step 2c — zero-change output swap -->
+      <div class="step">
+        <div class="step-num">2c</div>
+        <div class="step-content">
+          <h3>Zero-change output swap</h3>
+          <p>Already have an <code style="font-family:var(--font-mono);color:var(--accent2)">AVCaptureVideoDataOutputSampleBufferDelegate</code>? Swap the output inside a simulator guard and keep your delegate unchanged.</p>
+          <div class="code-wrap">
+            <div class="code-header">
+              <span class="code-lang">Swift</span>
+              <button class="copy-btn" onclick="copyCode(this)">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M4 4v8h8V4H4zm-1-1h10v10H3V3zM1 1h10v1H2v9H1V1z"/></svg>
+                Copy
+              </button>
+            </div>
+            <pre><code><span class="kw">#if</span> targetEnvironment(simulator)
+<span class="kw">let</span> output = <span class="type">SimulatorCameraOutput</span>()
+output.<span class="fn">setSampleBufferDelegate</span>(self, queue: myQueue)
+<span class="type">SimulatorCamera</span>.<span class="fn">start</span>()
+<span class="kw">#else</span>
+<span class="kw">let</span> output = <span class="type">AVCaptureVideoDataOutput</span>()
+output.<span class="fn">setSampleBufferDelegate</span>(self, queue: myQueue)
+session.<span class="fn">addOutput</span>(output)
+<span class="kw">#endif</span></code></pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2d — SwiftUI -->
+      <div class="step">
+        <div class="step-num">2d</div>
+        <div class="step-content">
+          <h3>SwiftUI preview view</h3>
+          <p>Drop-in SwiftUI component that renders the live camera feed — hardware-accelerated via <code style="font-family:var(--font-mono);color:var(--accent2)">AVSampleBufferDisplayLayer</code>.</p>
+          <div class="code-wrap">
+            <div class="code-header">
+              <span class="code-lang">Swift</span>
+              <button class="copy-btn" onclick="copyCode(this)">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M4 4v8h8V4H4zm-1-1h10v10H3V3zM1 1h10v1H2v9H1V1z"/></svg>
+                Copy
+              </button>
+            </div>
+            <pre><code><span class="kw">import</span> <span class="type">SwiftUI</span>
+<span class="kw">import</span> <span class="type">SimulatorCameraClient</span>
+
+<span class="kw">struct</span> <span class="type">ContentView</span>: <span class="type">View</span> {
+    <span class="kw">var</span> body: <span class="kw">some</span> <span class="type">View</span> {
+        <span class="type">SimulatorCameraPreviewView</span>()
+    }
+}</code></pre>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ─── PROTOCOL ─── -->
+<section id="protocol">
+  <div class="container">
+    <span class="section-label">Wire Format</span>
+    <h2>SCMF — Simulator Camera Message Format</h2>
+    <p class="section-sub">
+      A compact binary protocol over TCP. Each frame is a fixed header followed by JPEG payload.
+      Designed for minimal latency on localhost.
+    </p>
+
+    <div style="overflow-x:auto;">
+      <table class="proto-table">
+        <thead>
+          <tr>
+            <th>Field</th>
+            <th>Offset</th>
+            <th>Size</th>
+            <th>Type</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="field">magic</td>
+            <td>0</td>
+            <td class="size">4 B</td>
+            <td>ASCII</td>
+            <td><code style="font-family:var(--font-mono);color:var(--green)">"SCMF"</code> — magic identifier</td>
+          </tr>
+          <tr>
+            <td class="field">payloadLength</td>
+            <td>4</td>
+            <td class="size">4 B</td>
+            <td>uint32 LE</td>
+            <td>Length of the JPEG payload in bytes</td>
+          </tr>
+          <tr>
+            <td class="field">timestamp</td>
+            <td>8</td>
+            <td class="size">8 B</td>
+            <td>Float64 LE</td>
+            <td>Frame wall-clock time in seconds</td>
+          </tr>
+          <tr>
+            <td class="field">width</td>
+            <td>16</td>
+            <td class="size">4 B</td>
+            <td>uint32 LE</td>
+            <td>Frame width in pixels</td>
+          </tr>
+          <tr>
+            <td class="field">height</td>
+            <td>20</td>
+            <td class="size">4 B</td>
+            <td>uint32 LE</td>
+            <td>Frame height in pixels</td>
+          </tr>
+          <tr>
+            <td class="field">jpegData</td>
+            <td>24</td>
+            <td class="size">N B</td>
+            <td>bytes</td>
+            <td>JPEG-encoded frame (<code style="font-family:var(--font-mono)">payloadLength</code> bytes)</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="margin-top:1.25rem;color:var(--muted);font-size:.88rem;">
+      Full spec: <a href="PROTOCOL.md" style="color:var(--accent2);text-decoration:none;">docs/PROTOCOL.md</a> ·
+      Architecture: <a href="ARCHITECTURE.md" style="color:var(--accent2);text-decoration:none;">docs/ARCHITECTURE.md</a>
+    </p>
+  </div>
+</section>
+
+<!-- ─── SPONSOR ─── -->
+<section>
+  <div class="container">
+    <div class="sponsor-strip">
+      <div class="sponsor-text">
+        <h3>Enjoying SimulatorCamera?</h3>
+        <p>MIT-licensed, no paid tier, no telemetry. Maintained on tips — if it saves you a device-build loop, consider sponsoring.</p>
+      </div>
+      <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+        <a href="https://github.com/sponsors/dautovri" class="btn btn-primary" target="_blank">
+          ❤️ &nbsp;Sponsor on GitHub
+        </a>
+        <a href="https://www.buymeacoffee.com/dautovri" class="btn btn-outline" target="_blank">
+          ☕ Buy me a coffee
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── FOOTER ─── -->
+<footer>
+  <div class="footer-left">
+    <svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:20px;height:20px;flex-shrink:0;">
+      <rect width="28" height="28" rx="7" fill="#7c6af7"/>
+      <circle cx="14" cy="14" r="6" stroke="white" stroke-width="2"/>
+      <circle cx="14" cy="14" r="2.5" fill="white"/>
+    </svg>
+    <span>SimulatorCamera v0.2.0 · MIT License</span>
+  </div>
+  <div class="footer-right">
+    <a href="https://github.com/Akylas/SimulatorCamera" target="_blank">GitHub</a>
+    <a href="https://github.com/Akylas/SimulatorCamera/releases" target="_blank">Releases</a>
+    <a href="PROTOCOL.md">Protocol</a>
+    <a href="ARCHITECTURE.md">Architecture</a>
+    <a href="https://github.com/Akylas/SimulatorCamera/blob/main/CONTRIBUTING.md" target="_blank">Contributing</a>
+  </div>
+</footer>
+
+<script>
+  /* ── Tab switching ── */
+  function switchTab(evt, id) {
+    const parent = evt.target.closest('[id="install-tabs"]').parentElement;
+    parent.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    parent.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    evt.target.classList.add('active');
+    document.getElementById('tab-' + id).classList.add('active');
+  }
+
+  /* ── Copy to clipboard ── */
+  function copyCode(btn) {
+    const pre = btn.closest('.code-wrap').querySelector('pre');
+    const text = pre.innerText;
+    navigator.clipboard.writeText(text).then(() => {
+      btn.classList.add('copied');
+      btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 12L2 7.5l1.4-1.4 3.1 3.1 6.1-6.1L14 4.5z"/></svg> Copied!`;
+      setTimeout(() => {
+        btn.classList.remove('copied');
+        btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M4 4v8h8V4H4zm-1-1h10v10H3V3zM1 1h10v1H2v9H1V1z"/></svg> Copy`;
+      }, 2000);
+    });
+  }
+
+  /* ── Nav smooth highlight ── */
+  const sections = document.querySelectorAll('section[id]');
+  const navLinks = document.querySelectorAll('.nav-links a[href^="#"]');
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        navLinks.forEach(l => {
+          l.style.color = l.getAttribute('href') === '#' + e.target.id
+            ? 'var(--text)' : '';
+        });
+      }
+    });
+  }, { rootMargin: '-40% 0px -55%' });
+  sections.forEach(s => io.observe(s));
+</script>
+</body>
+</html>
