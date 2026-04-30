@@ -23,18 +23,7 @@ Frames show up in your app. Vision, VisionKit, Core ML, barcode detection, custo
 
 ## Why
 
-Every camera-using app today has one of these:
-
-```swift
-#if targetEnvironment(simulator)
-// TODO: fake it somehow
-#else
-let session = AVCaptureSession()
-// ...real code
-#endif
-```
-
-This project deletes that `TODO`. Same API shape in the Simulator and on device.
+Because Apple never added a way the camera from the Simulator. A must have for every developer. SimulatorCamera finally fill that gap.
 
 ## Features
 
