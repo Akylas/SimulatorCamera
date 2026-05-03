@@ -9,7 +9,7 @@ struct SimulatorCameraServerApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .frame(minWidth: 480, minHeight: 360)
+                .frame(minWidth: 480, idealWidth: 480, minHeight: 360)
         }
         .windowResizability(.contentSize)
     }

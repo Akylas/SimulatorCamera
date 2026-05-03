@@ -89,7 +89,8 @@ public final class SimulatorCameraSession: FrameSource, @unchecked Sendable {
 
     /// Delay between reconnection attempts.  Default: 2 seconds.
     public var reconnectDelay: TimeInterval = 2
-
+    private var generation: Int = 0
+    
     public init(host: String = "127.0.0.1", port: UInt16 = 9876) {
         self.host = host
         self.port = port
@@ -104,8 +105,10 @@ public final class SimulatorCameraSession: FrameSource, @unchecked Sendable {
             case .connecting, .streaming: return  // already running
             default: break
             }
+            self.generation += 1
+            let currentGen = self.generation
             self.explicitlyStopped = false
-            self.connect()
+            self.connect(generation: currentGen)
         }
         #else
         log.info("SimulatorCameraSession.start(): on-device no-op")
@@ -115,8 +118,9 @@ public final class SimulatorCameraSession: FrameSource, @unchecked Sendable {
 
     public func stop() {
         #if targetEnvironment(simulator)
-        queue.async { [weak self] in
+        queue.sync { [weak self] in
             guard let self else { return }
+            self.generation += 1   // invalidates all in-flight work
             self.explicitlyStopped = true
             self.cancelReconnect()
             self.cancelConnection()
@@ -145,10 +149,12 @@ public final class SimulatorCameraSession: FrameSource, @unchecked Sendable {
 
     // MARK: - Connection lifecycle (runs on `queue`)
 
-    private func connect() {
+    private func connect(generation: Int) {
         // Cancel any previous connection first.
         cancelConnection()
 
+        guard generation == self.generation else { return }
+        
         state = .connecting
 
         let endpoint = NWEndpoint.hostPort(
@@ -161,15 +167,17 @@ public final class SimulatorCameraSession: FrameSource, @unchecked Sendable {
         // Arm the connection-attempt timeout.
         let timeout = DispatchWorkItem { [weak self] in
             guard let self, self.state == .connecting else { return }
+            guard generation == self.generation else { return }
             self.log.info("Connection timeout — scheduling reconnect")
             self.cancelConnection()
-            self.scheduleReconnect()
+            self.scheduleReconnect(generation: generation)
         }
         timeoutWorkItem = timeout
         queue.asyncAfter(deadline: .now() + connectionTimeout, execute: timeout)
 
         conn.stateUpdateHandler = { [weak self] newState in
             guard let self else { return }
+            guard generation == self.generation else { return }
             // All state handling runs on `queue` because that's what we pass
             // to conn.start(queue:) below.
             switch newState {
@@ -178,14 +186,14 @@ public final class SimulatorCameraSession: FrameSource, @unchecked Sendable {
                 self.timeoutWorkItem = nil
                 self.isReconnecting = false
                 self.state = .streaming
-                self.receiveLoop()
+                self.receiveLoop(generation: generation)
 
             case .failed(let err):
                 self.timeoutWorkItem?.cancel()
                 self.timeoutWorkItem = nil
                 self.log.info("Connection failed: \(err.localizedDescription) — scheduling reconnect")
                 self.state = .failed(err.localizedDescription)
-                self.scheduleReconnect()
+                self.scheduleReconnect(generation: generation)
 
             case .cancelled:
                 // Triggered both by explicit stop() AND by cancelConnection()
@@ -213,13 +221,15 @@ public final class SimulatorCameraSession: FrameSource, @unchecked Sendable {
 
     // MARK: - Reconnection
 
-    private func scheduleReconnect() {
+    private func scheduleReconnect(generation: Int) {
         guard !explicitlyStopped, !isReconnecting else { return }
+        guard generation == self.generation else { return }
         isReconnecting = true
 
         let work = DispatchWorkItem { [weak self] in
             guard let self, !self.explicitlyStopped else { return }
-            self.connect()
+            guard generation == self.generation else { return }
+            self.connect(generation: generation)
         }
         reconnectWorkItem = work
         log.info("Reconnecting in \(self.reconnectDelay) s…")
@@ -234,12 +244,15 @@ public final class SimulatorCameraSession: FrameSource, @unchecked Sendable {
 
     // MARK: - Receive loop
 
-    private func receiveLoop() {
+    private func receiveLoop(generation: Int) {
+        guard generation == self.generation else { return }
+        
         // 256 KB is large enough to receive most frames (1280×720 JPEG ≈ 80–200 KB)
         // in a single read, eliminating extra round-trips through the receive loop.
         connection?.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) { [weak self] data, _, isComplete, error in
             guard let self else { return }
-
+            guard generation == self.generation else { return } // 🔴 STOP EARLY
+            
             if let data, !data.isEmpty {
                 self.decoder.append(data)
                 self.drainFrames()
@@ -257,11 +270,11 @@ public final class SimulatorCameraSession: FrameSource, @unchecked Sendable {
                 // Server closed the connection — reconnect unless stopped.
                 self.log.info("Server closed connection — scheduling reconnect")
                 self.cancelConnection()
-                self.scheduleReconnect()
+                self.scheduleReconnect(generation: generation)
                 return
             }
 
-            self.receiveLoop()
+            self.receiveLoop(generation: generation)
         }
     }
 
