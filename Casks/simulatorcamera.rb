@@ -4,7 +4,7 @@ cask "simulatorcamera" do
     sha256 "625b2f7579d080baa95facbdc94b00d84b4b90a8e422a7ba9922150f8b8c344e"
     url "https://github.com/Akylas/SimulatorCamera/releases/download/v#{version}/SimulatorCamera-#{version}-arm64.dmg"
   else
-    sha256 "a43836c7b45b42f4bcc1fd8b02aaff8a8862a2b129fdd13d77be40718e954b69"
+    sha256 "efd3a0da6859d09a909db4f55166ef27d13b694813c03cdc140a6dbd2ae6b6d6"
     url "https://github.com/Akylas/SimulatorCamera/releases/download/v#{version}/SimulatorCamera-#{version}-x86_64.dmg"
   end
 
