@@ -1,10 +1,10 @@
 cask "simulatorcamera" do
-  version "0.2.0"
+  version "1.0.0"
   if Hardware::CPU.arm?
-    sha256 "ARM64_SHA256"
+    sha256 "16cdc6cbdddbb9dd412bab86c0b22ea9b103fa2636240d88b9d975c50564fde4"
     url "https://github.com/Akylas/SimulatorCamera/releases/download/v#{version}/SimulatorCamera-#{version}-arm64.dmg"
   else
-    sha256 "X86_64_SHA256"
+    sha256 "e2a9ec1abc33749c62dfd1dde5950e08be7de2469c9326a9ef3c796cdfc224da"
     url "https://github.com/Akylas/SimulatorCamera/releases/download/v#{version}/SimulatorCamera-#{version}-x86_64.dmg"
   end
 

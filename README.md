@@ -23,18 +23,7 @@ Frames show up in your app. Vision, VisionKit, Core ML, barcode detection, custo
 
 ## Why
 
-Every camera-using app today has one of these:
-
-```swift
-#if targetEnvironment(simulator)
-// TODO: fake it somehow
-#else
-let session = AVCaptureSession()
-// ...real code
-#endif
-```
-
-This project deletes that `TODO`. Same API shape in the Simulator and on device.
+Because Apple never added a way the camera from the Simulator. A must have for every developer. SimulatorCamera finally fill that gap.
 
 ## Features
 
@@ -53,7 +42,7 @@ This project deletes that `TODO`. Same API shape in the Simulator and on device.
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/dautovri/SimulatorCamera.git", from: "0.2.0"),
+    .package(url: "https://github.com/Akylas/SimulatorCamera.git", from: "1.0.0"),
 ],
 targets: [
     .target(
@@ -72,7 +61,8 @@ Or in Xcode: **File → Add Package Dependencies…** → paste the repo URL.
 **Homebrew (recommended):**
 
 ```bash
-brew install --cask dautovri/tap/simulatorcamera
+brew tap akylas/simulatorcamera https://github.com/Akylas/SimulatorCamera
+brew install simulatorcamera
 open -a SimulatorCameraServer
 ```
 
